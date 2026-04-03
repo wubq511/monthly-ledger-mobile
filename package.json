@@ -1,6 +1,6 @@
 {
   "name": "monthly-ledger-mobile",
-  "version": "1.0.0",
+  "version": "1.0.3",
   "main": "index.ts",
   "scripts": {
     "start": "expo start",
@@ -9,6 +9,7 @@
     "web": "expo start --web",
     "test": "vitest run",
     "build:apk": "npx eas-cli@latest build --platform android --profile preview",
+    "android:apk:local": "npx expo prebuild --platform android --no-install && cd android && gradlew.bat clean assembleRelease",
     "build:aab": "npx eas-cli@latest build --platform android --profile production"
   },
   "dependencies": {

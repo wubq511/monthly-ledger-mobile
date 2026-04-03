@@ -2,7 +2,7 @@
   "expo": {
     "name": "月度账本",
     "slug": "monthly-ledger-mobile",
-    "version": "1.0.0",
+    "version": "1.0.3",
     "orientation": "portrait",
     "icon": "./assets/AndroidAPP.png",
     "userInterfaceStyle": "light",
@@ -17,7 +17,8 @@
     },
     "android": {
       "package": "com.h.monthlyledger",
-      "versionCode": 1,
+      "icon": "./assets/AndroidAPP.png",
+      "versionCode": 4,
       "adaptiveIcon": {
         "foregroundImage": "./assets/AndroidAPP.png",
         "backgroundColor": "#F7F0E8"
