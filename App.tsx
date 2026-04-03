@@ -1,4 +1,4 @@
-import { Suspense, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -21,14 +21,16 @@ import {
 } from '@expo-google-fonts/space-grotesk';
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { ExpenseForm } from './src/components/ExpenseForm';
+import { BudgetMeter, BudgetMonthStatusList, OverspendRankingList } from './src/components/BudgetPanels';
 import { MonthlyBarChart, MonthlyLineChart } from './src/components/Charts';
+import { ExpenseForm } from './src/components/ExpenseForm';
+import { CategoryMonthRankingCard, CategoryRankingList } from './src/components/RankingLists';
 import { getCategoryDefinition } from './src/constants/categories';
+import { initializeDatabase } from './src/lib/database';
 import { formatMonthLabel, formatShortMonthLabel, getCurrentMonthKey, shiftMonth } from './src/lib/date';
 import { formatCurrency } from './src/lib/format';
-import { initializeDatabase } from './src/lib/database';
+import { buildLedgerSummary, MONTHLY_BUDGET_LIMIT, type LedgerSummary } from './src/lib/ledgerSummary';
 import { useLedgerData } from './src/hooks/useLedgerData';
-import { buildLedgerSummary } from './src/lib/ledgerSummary';
 import type { ExpenseDraft, ExpenseEntry, TabKey } from './src/types/ledger';
 
 export default function App() {
@@ -58,9 +60,27 @@ function LedgerApp() {
   const { entries, loading, error, addEntry, removeEntry } = useLedgerData();
   const [activeTab, setActiveTab] = useState<TabKey>('overview');
   const [selectedMonth, setSelectedMonth] = useState(getCurrentMonthKey());
+  const [selectedRankingCategory, setSelectedRankingCategory] = useState<string | null>(null);
 
   const summary = buildLedgerSummary(entries, selectedMonth, formatShortMonthLabel);
-  const topCategory = summary.categoryTotals[0];
+  const rankingCategories = Object.keys(summary.categoryMonthRanking);
+  const rankingCategoryKey = rankingCategories.join('|');
+  const hasSelectedRankingCategory = selectedRankingCategory
+    ? rankingCategories.includes(selectedRankingCategory)
+    : false;
+
+  useEffect(() => {
+    if (rankingCategories.length === 0) {
+      if (selectedRankingCategory !== null) {
+        setSelectedRankingCategory(null);
+      }
+      return;
+    }
+
+    if (!selectedRankingCategory || !hasSelectedRankingCategory) {
+      setSelectedRankingCategory(summary.defaultCategoryRankingName);
+    }
+  }, [hasSelectedRankingCategory, rankingCategoryKey, selectedRankingCategory, summary.defaultCategoryRankingName]);
 
   const handleAddExpense = async (draft: ExpenseDraft) => {
     await addEntry(draft);
@@ -99,13 +119,7 @@ function LedgerApp() {
           <OverviewScreen
             selectedMonth={selectedMonth}
             onMonthChange={setSelectedMonth}
-            selectedTotal={summary.selectedTotal}
-            selectedCount={summary.selectedCount}
-            monthlyAverage={summary.monthlyAverage}
-            trackedMonthCount={summary.trackedMonthCount}
-            topCategoryName={topCategory?.name ?? null}
-            categoryTotals={summary.categoryTotals}
-            recentEntries={summary.selectedEntries.slice(0, 8)}
+            summary={summary}
             onDelete={handleDeleteExpense}
           />
         ) : null}
@@ -122,11 +136,10 @@ function LedgerApp() {
           <TrendsScreen
             selectedMonth={selectedMonth}
             onMonthChange={setSelectedMonth}
-            selectedTotal={summary.selectedTotal}
-            monthlyAverage={summary.monthlyAverage}
-            trackedMonthCount={summary.trackedMonthCount}
-            monthlyTrend={summary.monthlyTrend}
-            peakMonth={summary.peakMonth}
+            summary={summary}
+            rankingCategories={rankingCategories}
+            selectedRankingCategory={selectedRankingCategory}
+            onSelectRankingCategory={setSelectedRankingCategory}
           />
         ) : null}
 
@@ -159,94 +172,66 @@ function LedgerApp() {
 function OverviewScreen({
   selectedMonth,
   onMonthChange,
-  selectedTotal,
-  selectedCount,
-  monthlyAverage,
-  trackedMonthCount,
-  topCategoryName,
-  categoryTotals,
-  recentEntries,
+  summary,
   onDelete,
 }: {
   selectedMonth: string;
   onMonthChange: (monthKey: string) => void;
-  selectedTotal: number;
-  selectedCount: number;
-  monthlyAverage: number;
-  trackedMonthCount: number;
-  topCategoryName: string | null;
-  categoryTotals: Array<{ name: string; color: string; total: number }>;
-  recentEntries: ExpenseEntry[];
+  summary: LedgerSummary;
   onDelete: (entry: ExpenseEntry) => void;
 }) {
+  const topCategory = summary.selectedMonthRanking[0];
+  const budgetStatus = summary.selectedBudget.isOverBudget
+    ? `超支 ${formatCurrency(summary.selectedBudget.overspend)}`
+    : `结余 ${formatCurrency(summary.selectedBudget.remaining)}`;
+
   return (
     <ScrollView
       style={styles.flex}
       contentContainerStyle={styles.screenContent}
       showsVerticalScrollIndicator={false}>
       <LinearGradient
-        colors={['#1E1A17', '#4B3125', '#7A4A37']}
-        start={{ x: 0, y: 0 }}
+        colors={['#171311', '#37271E', '#744937']}
+        start={{ x: 0.04, y: 0 }}
         end={{ x: 1, y: 1 }}
         style={styles.heroPanel}>
-        <Text style={styles.heroKicker}>Monthly Ledger</Text>
+        <Text style={styles.heroKicker}>MONTH BUDGET</Text>
         <MonthSwitcher monthKey={selectedMonth} onChange={onMonthChange} light />
-        <Text style={styles.heroTotal}>{formatCurrency(selectedTotal)}</Text>
+        <Text style={styles.heroTotal}>{formatCurrency(summary.selectedTotal)}</Text>
         <Text style={styles.heroCaption}>
-          {topCategoryName
-            ? `本月支出最高的分类是 ${topCategoryName}`
-            : '这是月份账本，所有汇总都会按月自动更新'}
+          {topCategory
+            ? `${formatMonthLabel(selectedMonth)} 花得最多的是 ${topCategory.name}，占本月 ${Math.round(
+                topCategory.ratio * 100
+              )}%`
+            : '这是月份账本，所有统计都按月份自动更新。'}
         </Text>
-        <View style={styles.metricRow}>
-          <MetricChip label="本月记录数" value={`${selectedCount}`} />
-          <MetricChip label="月均支出" value={formatCurrency(monthlyAverage)} />
+
+        <BudgetMeter budget={summary.selectedBudget} budgetLimit={MONTHLY_BUDGET_LIMIT} light />
+
+        <View style={styles.metricGrid}>
+          <MetricChip label="本月预算状态" value={budgetStatus} />
+          <MetricChip label="累计超支" value={formatCurrency(summary.totalOverspend)} />
+          <MetricChip
+            label="平均每月超支"
+            value={formatCurrency(summary.averageMonthlyOverspend)}
+          />
+          <MetricChip label="超支月份数" value={`${summary.overspendMonthCount} 个`} />
         </View>
       </LinearGradient>
 
-      <View style={styles.section}>
-        <SectionHeader
-          title="分类占比"
-          body={`当前已记录 ${trackedMonthCount} 个月，这里展示 ${formatMonthLabel(selectedMonth)} 的分类分布。`}
-        />
-        {categoryTotals.length > 0 ? (
-          <View style={styles.breakdownList}>
-            {categoryTotals.map((item) => {
-              const ratio = selectedTotal > 0 ? item.total / selectedTotal : 0;
-
-              return (
-                <View key={item.name} style={styles.breakdownRow}>
-                  <View style={styles.breakdownHead}>
-                    <View style={styles.breakdownTitleRow}>
-                      <View style={[styles.dot, { backgroundColor: item.color }]} />
-                      <Text style={styles.breakdownTitle}>{item.name}</Text>
-                    </View>
-                    <Text style={styles.breakdownValue}>{formatCurrency(item.total)}</Text>
-                  </View>
-                  <View style={styles.progressTrack}>
-                    <View
-                      style={[
-                        styles.progressFill,
-                        {
-                          width: `${Math.max(ratio * 100, 8)}%`,
-                          backgroundColor: item.color,
-                        },
-                      ]}
-                    />
-                  </View>
-                </View>
-              );
-            })}
-          </View>
-        ) : (
-          <EmptyBlock title="本月暂无分类数据" body="去“记账”页选择月份后录入第一笔支出。" />
-        )}
-      </View>
+      <CategoryRankingList
+        title="本月分类消费排名"
+        body={`按 ${formatMonthLabel(selectedMonth)} 的支出金额排序，越靠前说明本月越花钱。`}
+        items={summary.selectedMonthRanking}
+        emptyTitle="本月暂无分类数据"
+        emptyBody="去“记账”页选择月份后录入第一笔支出。"
+      />
 
       <View style={styles.section}>
-        <SectionHeader title="本月记录" body="这里只显示月份，不显示具体日期。点击可删除错误账单。" />
-        {recentEntries.length > 0 ? (
+        <SectionHeader title="本月账单" body="这里只显示月份，不显示具体日期。点击可删除错误账单。" />
+        {summary.selectedEntries.length > 0 ? (
           <View style={styles.entryList}>
-            {recentEntries.map((entry) => (
+            {summary.selectedEntries.slice(0, 8).map((entry) => (
               <Pressable key={entry.id} style={styles.entryRow} onPress={() => onDelete(entry)}>
                 <View style={styles.entryLeft}>
                   <View
@@ -281,19 +266,17 @@ function OverviewScreen({
 function TrendsScreen({
   selectedMonth,
   onMonthChange,
-  selectedTotal,
-  monthlyAverage,
-  trackedMonthCount,
-  monthlyTrend,
-  peakMonth,
+  summary,
+  rankingCategories,
+  selectedRankingCategory,
+  onSelectRankingCategory,
 }: {
   selectedMonth: string;
   onMonthChange: (monthKey: string) => void;
-  selectedTotal: number;
-  monthlyAverage: number;
-  trackedMonthCount: number;
-  monthlyTrend: Array<{ key: string; label: string; value: number }>;
-  peakMonth: { monthKey: string; total: number } | null;
+  summary: LedgerSummary;
+  rankingCategories: string[];
+  selectedRankingCategory: string | null;
+  onSelectRankingCategory: (category: string) => void;
 }) {
   return (
     <ScrollView
@@ -302,21 +285,28 @@ function TrendsScreen({
       showsVerticalScrollIndicator={false}>
       <View style={styles.section}>
         <Text style={styles.sectionEyebrow}>Trend Room</Text>
-        <Text style={styles.pageTitle}>消费趋势</Text>
-        <Text style={styles.pageBody}>趋势页只按月份看变化，不再显示具体到天的波动。</Text>
+        <Text style={styles.pageTitle}>预算趋势</Text>
+        <Text style={styles.pageBody}>把每个月的支出、预算线和超支情况放在同一个视角里看。</Text>
       </View>
 
       <View style={styles.section}>
         <MonthSwitcher monthKey={selectedMonth} onChange={onMonthChange} />
         <View style={styles.statsGrid}>
-          <StatBlock label="当前月份支出" value={formatCurrency(selectedTotal)} />
-          <StatBlock label="月均支出" value={formatCurrency(monthlyAverage)} />
-          <StatBlock label="已记录月份" value={`${trackedMonthCount} 个`} />
+          <StatBlock label="当前月份支出" value={formatCurrency(summary.selectedTotal)} />
+          <StatBlock label="月均支出" value={formatCurrency(summary.monthlyAverage)} />
+          <StatBlock label="累计超支" value={formatCurrency(summary.totalOverspend)} />
+          <StatBlock
+            label="平均每月超支"
+            value={formatCurrency(summary.averageMonthlyOverspend)}
+          />
+          <StatBlock label="超支月份数" value={`${summary.overspendMonthCount} 个`} />
           <StatBlock
             label="最高月份"
             value={
-              peakMonth
-                ? `${formatShortMonthLabel(peakMonth.monthKey)} ${formatCurrency(peakMonth.total)}`
+              summary.peakMonth
+                ? `${formatShortMonthLabel(summary.peakMonth.monthKey)} ${formatCurrency(
+                    summary.peakMonth.total
+                  )}`
                 : '暂无'
             }
           />
@@ -324,12 +314,23 @@ function TrendsScreen({
       </View>
 
       <View style={styles.section}>
-        <MonthlyLineChart data={monthlyTrend} />
+        <MonthlyLineChart data={summary.monthlyTrend} budgetLimit={MONTHLY_BUDGET_LIMIT} />
       </View>
 
       <View style={styles.section}>
-        <MonthlyBarChart data={monthlyTrend} />
+        <MonthlyBarChart data={summary.monthlyTrend} budgetLimit={MONTHLY_BUDGET_LIMIT} />
       </View>
+
+      <OverspendRankingList rows={summary.overspendRanking} />
+
+      <BudgetMonthStatusList rows={summary.monthlyBudgetRows} />
+
+      <CategoryMonthRankingCard
+        selectedCategory={selectedRankingCategory}
+        categories={rankingCategories}
+        rankingMap={summary.categoryMonthRanking}
+        onSelectCategory={onSelectRankingCategory}
+      />
     </ScrollView>
   );
 }
@@ -425,35 +426,40 @@ const styles = StyleSheet.create({
   },
   safeArea: {
     flex: 1,
-    backgroundColor: '#F7F0E8',
+    backgroundColor: '#F6EFE7',
   },
   appShell: {
     flex: 1,
-    backgroundColor: '#F7F0E8',
+    backgroundColor: '#F6EFE7',
   },
   screenContent: {
     paddingHorizontal: 20,
     paddingTop: 12,
     paddingBottom: 140,
-    gap: 20,
+    gap: 18,
   },
   heroPanel: {
-    borderRadius: 32,
+    borderRadius: 34,
     paddingHorizontal: 22,
     paddingVertical: 22,
     gap: 14,
+    shadowColor: '#20130D',
+    shadowOpacity: 0.16,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 4,
   },
   heroKicker: {
     fontSize: 12,
     fontFamily: 'SpaceGrotesk_700Bold',
     fontWeight: '700',
-    letterSpacing: 1.6,
+    letterSpacing: 1.8,
     textTransform: 'uppercase',
     color: '#DDBB93',
   },
   heroTotal: {
-    fontSize: 42,
-    lineHeight: 48,
+    fontSize: 46,
+    lineHeight: 52,
     fontFamily: 'SpaceGrotesk_700Bold',
     fontWeight: '700',
     color: '#FFF7EF',
@@ -464,11 +470,13 @@ const styles = StyleSheet.create({
     fontFamily: 'SpaceGrotesk_400Regular',
     color: '#E6D7C8',
   },
-  metricRow: {
+  metricGrid: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 10,
   },
   metricChip: {
+    minWidth: '47%',
     flex: 1,
     borderRadius: 22,
     paddingHorizontal: 14,
@@ -485,6 +493,7 @@ const styles = StyleSheet.create({
   },
   metricChipValue: {
     fontSize: 15,
+    lineHeight: 20,
     fontFamily: 'SpaceGrotesk_700Bold',
     fontWeight: '700',
     color: '#FFF7EF',
@@ -528,49 +537,6 @@ const styles = StyleSheet.create({
     lineHeight: 21,
     fontFamily: 'SpaceGrotesk_400Regular',
     color: '#7E6C61',
-  },
-  breakdownList: {
-    gap: 14,
-  },
-  breakdownRow: {
-    gap: 10,
-  },
-  breakdownHead: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  breakdownTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  dot: {
-    width: 10,
-    height: 10,
-    borderRadius: 999,
-  },
-  breakdownTitle: {
-    fontSize: 15,
-    fontFamily: 'SpaceGrotesk_500Medium',
-    fontWeight: '600',
-    color: '#2A211C',
-  },
-  breakdownValue: {
-    fontSize: 14,
-    fontFamily: 'SpaceGrotesk_700Bold',
-    fontWeight: '700',
-    color: '#5E4D43',
-  },
-  progressTrack: {
-    height: 9,
-    borderRadius: 999,
-    backgroundColor: '#E7D9CC',
-    overflow: 'hidden',
-  },
-  progressFill: {
-    height: '100%',
-    borderRadius: 999,
   },
   entryList: {
     gap: 12,
@@ -706,13 +672,14 @@ const styles = StyleSheet.create({
   },
   statValue: {
     fontSize: 18,
+    lineHeight: 24,
     fontFamily: 'SpaceGrotesk_700Bold',
     fontWeight: '700',
     color: '#231B16',
   },
   loadingScreen: {
     flex: 1,
-    backgroundColor: '#F7F0E8',
+    backgroundColor: '#F6EFE7',
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 24,
@@ -761,7 +728,7 @@ const styles = StyleSheet.create({
     gap: 10,
     paddingTop: 12,
     paddingHorizontal: 12,
-    backgroundColor: 'rgba(247, 240, 232, 0.96)',
+    backgroundColor: 'rgba(246, 239, 231, 0.96)',
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
     borderWidth: 1,
