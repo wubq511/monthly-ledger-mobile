@@ -6,6 +6,9 @@
   "build": {
     "preview": {
       "distribution": "internal",
+      "cache": {
+        "disabled": true
+      },
       "android": {
         "buildType": "apk"
       }

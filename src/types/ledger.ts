@@ -18,6 +18,18 @@ export interface ExpenseDraft {
   note: string | null;
 }
 
+export interface LedgerBackupFile {
+  schemaVersion: number;
+  appVersion: string;
+  exportedAt: string;
+  entries: ExpenseEntry[];
+}
+
+export interface ImportExpensesResult {
+  importedCount: number;
+  skippedCount: number;
+}
+
 export interface CategoryDefinition {
   name: string;
   color: string;
