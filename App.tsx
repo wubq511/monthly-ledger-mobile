@@ -22,6 +22,7 @@ import {
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { BudgetMeter, BudgetMonthStatusList, OverspendRankingList } from './src/components/BudgetPanels';
+import { BackupActions } from './src/components/BackupActions';
 import { MonthlyBarChart, MonthlyLineChart } from './src/components/Charts';
 import { ExpenseForm } from './src/components/ExpenseForm';
 import { CategoryMonthRankingCard, CategoryRankingList } from './src/components/RankingLists';
@@ -57,7 +58,7 @@ export default function App() {
 
 function LedgerApp() {
   const insets = useSafeAreaInsets();
-  const { entries, loading, error, addEntry, removeEntry } = useLedgerData();
+  const { entries, loading, error, addEntry, removeEntry, refresh } = useLedgerData();
   const [activeTab, setActiveTab] = useState<TabKey>('overview');
   const [selectedMonth, setSelectedMonth] = useState(getCurrentMonthKey());
   const [selectedRankingCategory, setSelectedRankingCategory] = useState<string | null>(null);
@@ -140,6 +141,7 @@ function LedgerApp() {
             rankingCategories={rankingCategories}
             selectedRankingCategory={selectedRankingCategory}
             onSelectRankingCategory={setSelectedRankingCategory}
+            onDataImported={refresh}
           />
         ) : null}
 
@@ -270,6 +272,7 @@ function TrendsScreen({
   rankingCategories,
   selectedRankingCategory,
   onSelectRankingCategory,
+  onDataImported,
 }: {
   selectedMonth: string;
   onMonthChange: (monthKey: string) => void;
@@ -277,6 +280,7 @@ function TrendsScreen({
   rankingCategories: string[];
   selectedRankingCategory: string | null;
   onSelectRankingCategory: (category: string) => void;
+  onDataImported: () => Promise<void>;
 }) {
   return (
     <ScrollView
@@ -331,6 +335,10 @@ function TrendsScreen({
         rankingMap={summary.categoryMonthRanking}
         onSelectCategory={onSelectRankingCategory}
       />
+
+      <View style={styles.section}>
+        <BackupActions onImported={onDataImported} />
+      </View>
     </ScrollView>
   );
 }
