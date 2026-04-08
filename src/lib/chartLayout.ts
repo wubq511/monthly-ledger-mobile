@@ -4,6 +4,10 @@ export interface BudgetLabelLayout {
   textX: number;
 }
 
+export function getChartCanvasWidth(frameWidth: number, framePadding: number) {
+  return Math.max(frameWidth - framePadding * 2, 0);
+}
+
 export function getBudgetLabelLayout(
   chartWidth: number,
   chartPadding: number,

@@ -6,19 +6,19 @@ import Svg, {
   Line,
   LinearGradient as SvgLinearGradient,
   Path,
-  Rect,
   Stop,
   Text as SvgText,
 } from 'react-native-svg';
 
 import { formatCompactCurrency } from '../lib/format';
-import { getBudgetLabelLayout } from '../lib/chartLayout';
+import { getBudgetLabelLayout, getChartCanvasWidth } from '../lib/chartLayout';
 import type { MonthlyTrendPoint } from '../lib/ledgerSummary';
 import { getTrendMonthAfterSwipe } from '../lib/trendWindow';
 
 const CHART_HEIGHT = 212;
 const CHART_PADDING = 18;
-const BUDGET_LABEL_WIDTH = 76;
+const CHART_FRAME_PADDING = 16;
+const BUDGET_LABEL_WIDTH = 60;
 
 interface MonthlyLineChartProps {
   data: MonthlyTrendPoint[];
@@ -48,7 +48,7 @@ export function MonthlyLineChart({
 }: MonthlyLineChartProps) {
   const [width, setWidth] = useState(0);
   const scaleMax = getChartScale(data, budgetLimit);
-  const chartWidth = Math.max(width, 280);
+  const chartWidth = Math.max(getChartCanvasWidth(width, CHART_FRAME_PADDING), 280);
   const innerWidth = chartWidth - CHART_PADDING * 2;
   const innerHeight = CHART_HEIGHT - CHART_PADDING * 2;
 
@@ -72,8 +72,9 @@ export function MonthlyLineChart({
     CHART_PADDING + innerHeight
   } L ${coordinates[0].x} ${CHART_PADDING + innerHeight} Z`;
 
-  const budgetLabelLayout = getBudgetLabelLayout(chartWidth, CHART_PADDING, BUDGET_LABEL_WIDTH);
-  const budgetLabelY = Math.max(CHART_PADDING + 12, budgetY - 8);
+  const budgetLabelLayout = getBudgetLabelLayout(chartWidth, CHART_PADDING, BUDGET_LABEL_WIDTH, 4);
+  const budgetLabelY = Math.max(CHART_PADDING + 10, budgetY - 10);
+  const budgetLabelText = `¥${Math.round(budgetLimit)}`;
   const panResponder = PanResponder.create({
     onMoveShouldSetPanResponder: (_, gestureState) =>
       Math.abs(gestureState.dx) > 12 && Math.abs(gestureState.dx) > Math.abs(gestureState.dy),
@@ -135,6 +136,9 @@ export function MonthlyLineChart({
           );
         })}
 
+        <Path d={areaPath} fill="url(#trendFill)" />
+        <Path d={linePath} fill="none" stroke="url(#trendStroke)" strokeWidth={4} />
+
         <Line
           x1={CHART_PADDING}
           y1={budgetY}
@@ -143,28 +147,17 @@ export function MonthlyLineChart({
           stroke="#657C50"
           strokeDasharray="6 6"
           strokeWidth={2}
+          strokeLinecap="round"
         />
 
-        <Rect
-          x={budgetLabelLayout.left}
-          y={budgetLabelY - 12}
-          width={BUDGET_LABEL_WIDTH}
-          height={18}
-          rx={9}
-          fill="#FBF7F1"
-          opacity={0.96}
-        />
         <SvgText
           x={budgetLabelLayout.textX}
           y={budgetLabelY}
           fill="#657C50"
           fontSize="11"
           textAnchor="end">
-          预算 2000
+          {budgetLabelText}
         </SvgText>
-
-        <Path d={areaPath} fill="url(#trendFill)" />
-        <Path d={linePath} fill="none" stroke="url(#trendStroke)" strokeWidth={4} />
 
         {coordinates.map((point) => (
           <Circle
