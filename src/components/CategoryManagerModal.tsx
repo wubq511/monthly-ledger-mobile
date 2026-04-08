@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -9,10 +9,11 @@ import {
   Text,
   TextInput,
   View,
+  type GestureResponderEvent,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { moveCategoryBeforeTarget } from '../lib/categoryReorder';
+import { moveItem } from '../lib/categoryReorder';
 import type {
   CategoryRecord,
   CategoryUsageSummary,
@@ -44,6 +45,30 @@ type EditorState =
       subcategoryId: string;
     };
 
+type DragKind = 'category' | 'subcategory';
+
+interface DragFrame {
+  id: string;
+  pageY: number;
+  height: number;
+}
+
+interface DragState {
+  kind: DragKind;
+  activeId: string;
+  categoryId: string | null;
+  ids: string[];
+  frames: DragFrame[];
+  targetIndex: number;
+}
+
+interface PendingDrag {
+  kind: DragKind;
+  activeId: string;
+  categoryId: string | null;
+  startPageY: number;
+}
+
 interface CategoryManagerModalProps {
   visible: boolean;
   loading: boolean;
@@ -53,6 +78,7 @@ interface CategoryManagerModalProps {
   onRenameCategory: (id: string, name: string) => Promise<void>;
   onDeleteCategory: (id: string) => Promise<void>;
   onReorderCategories: (idsInOrder: string[]) => Promise<void>;
+  onReorderSubcategories: (categoryId: string, idsInOrder: string[]) => Promise<void>;
   onCreateSubcategory: (categoryId: string, name: string) => Promise<void>;
   onRenameSubcategory: (id: string, name: string) => Promise<void>;
   onDeleteSubcategory: (id: string) => Promise<void>;
@@ -64,6 +90,33 @@ function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
 
+function measureFrame(id: string, view: View | null): Promise<DragFrame | null> {
+  return new Promise((resolve) => {
+    if (!view || typeof view.measureInWindow !== 'function') {
+      resolve(null);
+      return;
+    }
+
+    view.measureInWindow((_x, pageY, _width, height) => {
+      resolve({ id, pageY, height });
+    });
+  });
+}
+
+function resolveTargetIndex(frames: DragFrame[], pageY: number) {
+  if (frames.length === 0) {
+    return 0;
+  }
+
+  for (const [index, frame] of frames.entries()) {
+    if (pageY < frame.pageY + frame.height / 2) {
+      return index;
+    }
+  }
+
+  return frames.length - 1;
+}
+
 export function CategoryManagerModal({
   visible,
   loading,
@@ -73,6 +126,7 @@ export function CategoryManagerModal({
   onRenameCategory,
   onDeleteCategory,
   onReorderCategories,
+  onReorderSubcategories,
   onCreateSubcategory,
   onRenameSubcategory,
   onDeleteSubcategory,
@@ -83,30 +137,50 @@ export function CategoryManagerModal({
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [editorValue, setEditorValue] = useState('');
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
-  const [pickedCategoryId, setPickedCategoryId] = useState<string | null>(null);
-
-  const pickedCategory = useMemo(
-    () => categories.find((category) => category.id === pickedCategoryId) ?? null,
-    [categories, pickedCategoryId]
-  );
+  const [dragState, setDragState] = useState<DragState | null>(null);
+  const categoryRefs = useRef(new Map<string, View | null>());
+  const subcategoryRefs = useRef(new Map<string, Map<string, View | null>>());
+  const pendingDragRef = useRef<PendingDrag | null>(null);
+  const longPressTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (!visible) {
       setEditor(null);
       setEditorValue('');
       setBusyLabel(null);
-      setPickedCategoryId(null);
+      setDragState(null);
+      pendingDragRef.current = null;
+      if (longPressTimeoutRef.current) {
+        clearTimeout(longPressTimeoutRef.current);
+        longPressTimeoutRef.current = null;
+      }
     }
   }, [visible]);
 
+  useEffect(() => {
+    return () => {
+      if (longPressTimeoutRef.current) {
+        clearTimeout(longPressTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const clearPendingDrag = () => {
+    pendingDragRef.current = null;
+    if (longPressTimeoutRef.current) {
+      clearTimeout(longPressTimeoutRef.current);
+      longPressTimeoutRef.current = null;
+    }
+  };
+
   const closeModal = () => {
-    if (busyLabel) {
+    if (busyLabel || dragState) {
       return;
     }
 
+    clearPendingDrag();
     setEditor(null);
     setEditorValue('');
-    setPickedCategoryId(null);
     onClose();
   };
 
@@ -155,33 +229,122 @@ export function CategoryManagerModal({
     }
   };
 
-  const handleCategoryLongPress = (categoryId: string) => {
+  const activateDrag = async (pendingDrag: PendingDrag) => {
+    const ids =
+      pendingDrag.kind === 'category'
+        ? categories.map((category) => category.id)
+        : categories
+            .find((category) => category.id === pendingDrag.categoryId)
+            ?.subcategories.map((subcategory) => subcategory.id) ?? [];
+
+    const frames = await Promise.all(
+      ids.map((id) => {
+        if (pendingDrag.kind === 'category') {
+          return measureFrame(id, categoryRefs.current.get(id) ?? null);
+        }
+
+        const categorySubcategoryRefs = subcategoryRefs.current.get(pendingDrag.categoryId ?? '');
+        return measureFrame(id, categorySubcategoryRefs?.get(id) ?? null);
+      })
+    );
+
+    if (
+      !pendingDragRef.current ||
+      pendingDragRef.current.activeId !== pendingDrag.activeId ||
+      pendingDragRef.current.kind !== pendingDrag.kind
+    ) {
+      return;
+    }
+
+    const resolvedFrames = frames.filter((frame): frame is DragFrame => frame !== null);
+    const activeIndex = ids.findIndex((id) => id === pendingDrag.activeId);
+
+    if (resolvedFrames.length === 0 || activeIndex === -1) {
+      clearPendingDrag();
+      return;
+    }
+
+    setDragState({
+      kind: pendingDrag.kind,
+      activeId: pendingDrag.activeId,
+      categoryId: pendingDrag.categoryId,
+      ids,
+      frames: resolvedFrames,
+      targetIndex: resolveTargetIndex(resolvedFrames, pendingDrag.startPageY),
+    });
+  };
+
+  const beginPendingDrag = (
+    kind: DragKind,
+    activeId: string,
+    categoryId: string | null,
+    event: GestureResponderEvent
+  ) => {
     if (busyLabel) {
       return;
     }
 
-    setPickedCategoryId((current) => (current === categoryId ? null : categoryId));
+    clearPendingDrag();
+
+    const pendingDrag: PendingDrag = {
+      kind,
+      activeId,
+      categoryId,
+      startPageY: event.nativeEvent.pageY,
+    };
+
+    pendingDragRef.current = pendingDrag;
+    longPressTimeoutRef.current = setTimeout(() => {
+      void activateDrag(pendingDrag);
+    }, 220);
   };
 
-  const handleCategoryPress = async (targetCategoryId: string) => {
-    if (!pickedCategoryId || pickedCategoryId === targetCategoryId) {
-      if (pickedCategoryId === targetCategoryId) {
-        setPickedCategoryId(null);
+  const updateDrag = (event: GestureResponderEvent) => {
+    if (dragState) {
+      const nextTargetIndex = resolveTargetIndex(dragState.frames, event.nativeEvent.pageY);
+
+      if (nextTargetIndex !== dragState.targetIndex) {
+        setDragState({
+          ...dragState,
+          targetIndex: nextTargetIndex,
+        });
       }
+
       return;
     }
 
-    setBusyLabel('正在调整顺序...');
+    const pendingDrag = pendingDragRef.current;
+
+    if (pendingDrag && Math.abs(event.nativeEvent.pageY - pendingDrag.startPageY) > 10) {
+      clearPendingDrag();
+    }
+  };
+
+  const finishDrag = async () => {
+    clearPendingDrag();
+
+    if (!dragState) {
+      return;
+    }
+
+    const currentDragState = dragState;
+    setDragState(null);
+
+    const currentIndex = currentDragState.ids.findIndex((id) => id === currentDragState.activeId);
+
+    if (currentIndex === -1 || currentIndex === currentDragState.targetIndex) {
+      return;
+    }
+
+    const nextIds = moveItem(currentDragState.ids, currentIndex, currentDragState.targetIndex);
+    setBusyLabel(currentDragState.kind === 'category' ? '正在更新大类顺序...' : '正在更新细分顺序...');
 
     try {
-      await onReorderCategories(
-        moveCategoryBeforeTarget(
-          categories.map((category) => category.id),
-          pickedCategoryId,
-          targetCategoryId
-        )
-      );
-      setPickedCategoryId(null);
+      if (currentDragState.kind === 'category') {
+        await onReorderCategories(nextIds);
+      } else if (currentDragState.categoryId) {
+        await onReorderSubcategories(currentDragState.categoryId, nextIds);
+      }
     } catch (error) {
       Alert.alert('调整失败', getErrorMessage(error, '分类顺序更新失败'));
     } finally {
@@ -207,9 +370,6 @@ export function CategoryManagerModal({
 
             try {
               await onDeleteCategory(category.id);
-              if (pickedCategoryId === category.id) {
-                setPickedCategoryId(null);
-              }
             } catch (error) {
               Alert.alert('删除失败', getErrorMessage(error, '删除大类失败'));
             } finally {
@@ -253,6 +413,12 @@ export function CategoryManagerModal({
     ]);
   };
 
+  const dragHelperText = dragState
+    ? dragState.kind === 'category'
+      ? '拖动大类到目标位置后松手。'
+      : '拖动细分到目标位置后松手。'
+    : '长按并拖动手柄即可调整顺序。';
+
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={closeModal}>
       <View style={styles.root}>
@@ -292,15 +458,7 @@ export function CategoryManagerModal({
                 <Text style={styles.primaryActionText}>新增大类</Text>
               </Pressable>
 
-              {pickedCategory ? (
-                <View style={styles.pickHint}>
-                  <Text style={styles.pickHintText}>
-                    已选中“{pickedCategory.name}”，点击另一个大类可把它放到该项前面。
-                  </Text>
-                </View>
-              ) : (
-                <Text style={styles.helperText}>长按大类可调整顺序。</Text>
-              )}
+              <Text style={styles.helperText}>{dragHelperText}</Text>
             </View>
 
             {busyLabel ? (
@@ -315,26 +473,44 @@ export function CategoryManagerModal({
               contentContainerStyle={styles.scrollContent}
               keyboardShouldPersistTaps="handled"
               showsVerticalScrollIndicator={false}>
-              {categories.map((category) => {
-                const selectedForReorder = category.id === pickedCategoryId;
-                const canReceiveDrop = Boolean(pickedCategoryId) && !selectedForReorder;
+              {categories.map((category, categoryIndex) => {
+                const isCategoryDrag = dragState?.kind === 'category';
+                const activeCategoryDragId = isCategoryDrag ? dragState?.activeId : null;
+                const currentCategoryIndex = isCategoryDrag
+                  ? dragState?.ids.findIndex((id) => id === activeCategoryDragId)
+                  : -1;
+                const categoryDropTarget =
+                  isCategoryDrag &&
+                  dragState?.targetIndex === categoryIndex &&
+                  currentCategoryIndex !== categoryIndex;
 
                 return (
-                  <Pressable
+                  <View
                     key={category.id}
-                    onLongPress={() => handleCategoryLongPress(category.id)}
-                    delayLongPress={220}
-                    onPress={() => {
-                      void handleCategoryPress(category.id);
+                    ref={(node) => {
+                      categoryRefs.current.set(category.id, node);
                     }}
+                    collapsable={false}
                     style={[
                       styles.categoryCard,
-                      selectedForReorder && styles.categoryCardPicked,
-                      canReceiveDrop && styles.categoryCardDropTarget,
+                      activeCategoryDragId === category.id && styles.categoryCardDragging,
+                      categoryDropTarget && styles.categoryCardDropTarget,
                     ]}>
                     <View style={styles.categoryHeader}>
                       <View style={styles.categoryTitleGroup}>
-                        <Text style={styles.categoryHandle}>⋮⋮</Text>
+                        <View
+                          onTouchStart={(event) => beginPendingDrag('category', category.id, null, event)}
+                          onTouchMove={updateDrag}
+                          onTouchEnd={() => {
+                            void finishDrag();
+                          }}
+                          onTouchCancel={() => {
+                            void finishDrag();
+                          }}
+                          style={styles.dragHandleTouchArea}>
+                          <Text style={styles.categoryHandle}>⋮⋮</Text>
+                        </View>
+
                         <View style={styles.categoryLabelGroup}>
                           <Text style={styles.categoryTitle}>{category.name}</Text>
                           <Text style={styles.categoryMeta}>
@@ -374,44 +550,82 @@ export function CategoryManagerModal({
                       </View>
                     </View>
 
-                    {canReceiveDrop ? (
-                      <Text style={styles.dropHint}>点击这里，把“{pickedCategory?.name}”放到此项前面</Text>
-                    ) : null}
-
                     <View style={styles.subcategoryList}>
                       {category.subcategories.length > 0 ? (
-                        category.subcategories.map((subcategory) => (
-                          <View key={subcategory.id} style={styles.subcategoryRow}>
-                            <Text style={styles.subcategoryName}>{subcategory.name}</Text>
-                            <View style={styles.subcategoryActions}>
-                              <ActionChip
-                                label="改名"
-                                compact
-                                onPress={() =>
-                                  openEditor({
-                                    mode: 'rename-subcategory',
-                                    title: '修改细分名称',
-                                    confirmLabel: '正在修改细分...',
-                                    initialValue: subcategory.name,
-                                    categoryId: category.id,
-                                    subcategoryId: subcategory.id,
-                                  })
-                                }
-                              />
-                              <ActionChip
-                                label="删除"
-                                tone="danger"
-                                compact
-                                onPress={() => void handleDeleteSubcategory(category, subcategory)}
-                              />
+                        category.subcategories.map((subcategory, subcategoryIndex) => {
+                          const isSubcategoryDrag =
+                            dragState?.kind === 'subcategory' && dragState.categoryId === category.id;
+                          const activeSubcategoryDragId = isSubcategoryDrag ? dragState?.activeId : null;
+                          const currentSubcategoryIndex = isSubcategoryDrag
+                            ? dragState?.ids.findIndex((id) => id === activeSubcategoryDragId)
+                            : -1;
+                          const subcategoryDropTarget =
+                            isSubcategoryDrag &&
+                            dragState?.targetIndex === subcategoryIndex &&
+                            currentSubcategoryIndex !== subcategoryIndex;
+
+                          return (
+                            <View
+                              key={subcategory.id}
+                              ref={(node) => {
+                                const categorySubcategoryRefs =
+                                  subcategoryRefs.current.get(category.id) ?? new Map<string, View | null>();
+                                categorySubcategoryRefs.set(subcategory.id, node);
+                                subcategoryRefs.current.set(category.id, categorySubcategoryRefs);
+                              }}
+                              collapsable={false}
+                              style={[
+                                styles.subcategoryRow,
+                                activeSubcategoryDragId === subcategory.id && styles.subcategoryRowDragging,
+                                subcategoryDropTarget && styles.subcategoryRowDropTarget,
+                              ]}>
+                              <View style={styles.subcategoryContent}>
+                                <View
+                                  onTouchStart={(event) =>
+                                    beginPendingDrag('subcategory', subcategory.id, category.id, event)
+                                  }
+                                  onTouchMove={updateDrag}
+                                  onTouchEnd={() => {
+                                    void finishDrag();
+                                  }}
+                                  onTouchCancel={() => {
+                                    void finishDrag();
+                                  }}
+                                  style={styles.dragHandleTouchArea}>
+                                  <Text style={styles.subcategoryHandle}>⋮⋮</Text>
+                                </View>
+                                <Text style={styles.subcategoryName}>{subcategory.name}</Text>
+                              </View>
+                              <View style={styles.subcategoryActions}>
+                                <ActionChip
+                                  label="改名"
+                                  compact
+                                  onPress={() =>
+                                    openEditor({
+                                      mode: 'rename-subcategory',
+                                      title: '修改细分名称',
+                                      confirmLabel: '正在修改细分...',
+                                      initialValue: subcategory.name,
+                                      categoryId: category.id,
+                                      subcategoryId: subcategory.id,
+                                    })
+                                  }
+                                />
+                                <ActionChip
+                                  label="删除"
+                                  tone="danger"
+                                  compact
+                                  onPress={() => void handleDeleteSubcategory(category, subcategory)}
+                                />
+                              </View>
                             </View>
-                          </View>
-                        ))
+                          );
+                        })
                       ) : (
                         <Text style={styles.subcategoryEmpty}>先给这个大类补一个常用细分。</Text>
                       )}
                     </View>
-                  </Pressable>
+                  </View>
                 );
               })}
 
@@ -563,20 +777,6 @@ const styles = StyleSheet.create({
     fontFamily: 'SpaceGrotesk_400Regular',
     color: '#806D62',
   },
-  pickHint: {
-    borderRadius: 16,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    backgroundColor: '#F4E8DC',
-    borderWidth: 1,
-    borderColor: '#E2CCBA',
-  },
-  pickHintText: {
-    fontSize: 13,
-    lineHeight: 18,
-    fontFamily: 'SpaceGrotesk_500Medium',
-    color: '#6D5448',
-  },
   statusRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -607,13 +807,18 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     gap: 12,
   },
-  categoryCardPicked: {
+  categoryCardDragging: {
     borderColor: '#C76439',
     backgroundColor: '#FFF5EE',
+    shadowColor: '#8A563A',
+    shadowOpacity: 0.12,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 3,
   },
   categoryCardDropTarget: {
-    borderStyle: 'dashed',
     borderColor: '#CBA78E',
+    borderStyle: 'dashed',
   },
   categoryHeader: {
     gap: 12,
@@ -622,6 +827,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
+  },
+  dragHandleTouchArea: {
+    width: 28,
+    minHeight: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   categoryHandle: {
     fontSize: 18,
@@ -648,12 +859,6 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 8,
   },
-  dropHint: {
-    fontSize: 12,
-    lineHeight: 17,
-    fontFamily: 'SpaceGrotesk_500Medium',
-    color: '#9A5E3E',
-  },
   subcategoryList: {
     gap: 8,
   },
@@ -666,6 +871,26 @@ const styles = StyleSheet.create({
     backgroundColor: '#F7EFE6',
     paddingHorizontal: 12,
     paddingVertical: 10,
+  },
+  subcategoryRowDragging: {
+    borderWidth: 1,
+    borderColor: '#C76439',
+    backgroundColor: '#FFF5EE',
+  },
+  subcategoryRowDropTarget: {
+    borderWidth: 1,
+    borderColor: '#CBA78E',
+    borderStyle: 'dashed',
+  },
+  subcategoryContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flex: 1,
+  },
+  subcategoryHandle: {
+    fontSize: 16,
+    color: '#A78876',
   },
   subcategoryName: {
     flex: 1,

@@ -283,6 +283,21 @@ export async function updateCategoryOrder(db: SQLiteDatabase, idsInOrder: string
   });
 }
 
+export async function updateSubcategoryOrder(
+  db: SQLiteDatabase,
+  categoryId: string,
+  idsInOrder: string[]
+) {
+  await db.withTransactionAsync(async () => {
+    for (const [sortOrder, id] of idsInOrder.entries()) {
+      await db.runAsync(
+        'UPDATE subcategories SET sort_order = ?, updated_at = ? WHERE id = ? AND category_id = ?',
+        [sortOrder, new Date().toISOString(), id, categoryId]
+      );
+    }
+  });
+}
+
 export async function renameCategory(db: SQLiteDatabase, id: string, name: string) {
   const category = (await getAllCategories(db)).find((item) => item.id === id);
 

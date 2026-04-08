@@ -65,6 +65,7 @@ function LedgerApp() {
     renameCategory,
     deleteCategory,
     reorderCategories,
+    reorderSubcategories,
     createSubcategory,
     renameSubcategory,
     deleteSubcategory,
@@ -152,6 +153,7 @@ function LedgerApp() {
             onRenameCategory={renameCategory}
             onDeleteCategory={deleteCategory}
             onReorderCategories={reorderCategories}
+            onReorderSubcategories={reorderSubcategories}
             onCreateSubcategory={createSubcategory}
             onRenameSubcategory={renameSubcategory}
             onDeleteSubcategory={deleteSubcategory}
