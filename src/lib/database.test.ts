@@ -46,6 +46,7 @@ interface DatabaseApi {
   renameCategory: (db: never, id: string, name: string) => Promise<void>;
   deleteCategory: (db: never, id: string) => Promise<void>;
   renameSubcategory: (db: never, id: string, name: string) => Promise<void>;
+  updateCategoryOrder: (db: never, idsInOrder: string[]) => Promise<void>;
 }
 
 function requireDatabaseApi<K extends keyof DatabaseApi>(key: K): DatabaseApi[K] {
@@ -180,6 +181,19 @@ class FakeDatabase {
           ? {
               ...row,
               name: params[0] as string,
+              updatedAt: params[1] as string,
+            }
+          : row
+      );
+      return;
+    }
+
+    if (normalized.startsWith('UPDATE CATEGORIES SET SORT_ORDER = ?, UPDATED_AT = ? WHERE ID = ?')) {
+      this.categories = this.categories.map((row) =>
+        row.id === params[2]
+          ? {
+              ...row,
+              sortOrder: params[0] as number,
               updatedAt: params[1] as string,
             }
           : row
@@ -416,5 +430,28 @@ describe('database category persistence', () => {
 
     expect(expenses[0]?.subcategory).toBe('夜宵');
     expect(categories[0]?.subcategories[0]?.name).toBe('夜宵');
+  });
+
+  it('persists category order changes for subsequent reads', async () => {
+    const db = new FakeDatabase([]);
+    const initializeDatabase = requireDatabaseApi('initializeDatabase');
+    const getAllCategories = requireDatabaseApi('getAllCategories');
+    const updateCategoryOrder = requireDatabaseApi('updateCategoryOrder');
+
+    await initializeDatabase(db as never);
+    const categories = await getAllCategories(db as never);
+    const reorderedIds = categories.slice(0, 3).map((item) => item.id);
+
+    expect(reorderedIds).toHaveLength(3);
+
+    await updateCategoryOrder(db as never, [reorderedIds[2]!, reorderedIds[0]!, reorderedIds[1]!]);
+
+    const reordered = await getAllCategories(db as never);
+
+    expect(reordered.slice(0, 3).map((item) => item.id)).toEqual([
+      reorderedIds[2],
+      reorderedIds[0],
+      reorderedIds[1],
+    ]);
   });
 });
