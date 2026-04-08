@@ -1,4 +1,4 @@
-import type { CategoryDefinition } from '../types/ledger';
+import type { CategoryDefinition, CategoryRecord } from '../types/ledger';
 
 export const CATEGORY_DEFINITIONS: CategoryDefinition[] = [
   {
@@ -69,7 +69,35 @@ export const CATEGORY_DEFINITIONS: CategoryDefinition[] = [
 ];
 
 export const DEFAULT_CATEGORY = CATEGORY_DEFINITIONS[0];
+export const CATEGORY_COLOR_PALETTE = CATEGORY_DEFINITIONS.map((item) => item.color);
+export const FALLBACK_CATEGORY_COLOR = DEFAULT_CATEGORY.color;
 
 export function getCategoryDefinition(categoryName: string) {
   return CATEGORY_DEFINITIONS.find((item) => item.name === categoryName) ?? DEFAULT_CATEGORY;
+}
+
+export function getSeedColorByIndex(index: number) {
+  return CATEGORY_COLOR_PALETTE[index % CATEGORY_COLOR_PALETTE.length] ?? FALLBACK_CATEGORY_COLOR;
+}
+
+export function getCategoryColor(categoryName: string, categories?: CategoryRecord[]) {
+  return categories?.find((item) => item.name === categoryName)?.color ?? getCategoryDefinition(categoryName).color;
+}
+
+export function getRuntimeCategoryDefinition(categories: CategoryRecord[], categoryName: string): CategoryDefinition {
+  const category = categories.find((item) => item.name === categoryName);
+
+  if (!category) {
+    return getCategoryDefinition(categoryName);
+  }
+
+  return {
+    name: category.name,
+    color: category.color,
+    subcategories: category.subcategories.map((item) => item.name),
+  };
+}
+
+export function getRuntimeDefaultCategory(categories: CategoryRecord[]) {
+  return categories[0] ? getRuntimeCategoryDefinition(categories, categories[0].name) : DEFAULT_CATEGORY;
 }

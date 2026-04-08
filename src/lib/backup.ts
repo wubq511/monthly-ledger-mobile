@@ -1,10 +1,11 @@
 import { isValidMonthInput } from './date';
-import type { ExpenseEntry, LedgerBackupFile } from '../types/ledger';
+import type { CategoryRecord, ExpenseEntry, LedgerBackupFile, SubcategoryRecord } from '../types/ledger';
 
-export const BACKUP_SCHEMA_VERSION = 1;
+export const BACKUP_SCHEMA_VERSION = 2;
 
 export function buildBackupPayload(
   entries: ExpenseEntry[],
+  categories: CategoryRecord[],
   appVersion: string,
   exportedAt = new Date().toISOString()
 ): LedgerBackupFile {
@@ -13,6 +14,10 @@ export function buildBackupPayload(
     appVersion,
     exportedAt,
     entries: entries.map((entry) => ({ ...entry })),
+    categories: categories.map((category) => ({
+      ...category,
+      subcategories: category.subcategories.map((subcategory) => ({ ...subcategory })),
+    })),
   };
 }
 
@@ -45,13 +50,17 @@ export function parseBackupJson(raw: string): LedgerBackupFile {
     typeof candidate.appVersion !== 'string' ||
     typeof candidate.exportedAt !== 'string' ||
     Number.isNaN(Date.parse(candidate.exportedAt)) ||
-    !Array.isArray(candidate.entries)
+    !Array.isArray(candidate.entries) ||
+    !Array.isArray(candidate.categories)
   ) {
     throw new Error('备份文件格式不合法');
   }
 
   const entries = candidate.entries.map(assertExpenseEntry);
+  const categories = candidate.categories.map(assertCategoryRecord);
   const entryIds = new Set<string>();
+  const categoryIds = new Set<string>();
+  const subcategoryIds = new Set<string>();
 
   for (const entry of entries) {
     if (entryIds.has(entry.id)) {
@@ -61,11 +70,28 @@ export function parseBackupJson(raw: string): LedgerBackupFile {
     entryIds.add(entry.id);
   }
 
+  for (const category of categories) {
+    if (categoryIds.has(category.id)) {
+      throw new Error('备份文件格式不合法');
+    }
+
+    categoryIds.add(category.id);
+
+    for (const subcategory of category.subcategories) {
+      if (subcategory.categoryId !== category.id || subcategoryIds.has(subcategory.id)) {
+        throw new Error('备份文件格式不合法');
+      }
+
+      subcategoryIds.add(subcategory.id);
+    }
+  }
+
   return {
     schemaVersion: candidate.schemaVersion,
     appVersion: candidate.appVersion,
     exportedAt: candidate.exportedAt,
     entries,
+    categories,
   };
 }
 
@@ -102,5 +128,75 @@ function assertExpenseEntry(value: unknown): ExpenseEntry {
     subcategory: (entry.subcategory ?? null) as string | null,
     note: (entry.note ?? null) as string | null,
     createdAt: entry.createdAt,
+  };
+}
+
+function assertCategoryRecord(value: unknown): CategoryRecord {
+  if (!value || typeof value !== 'object') {
+    throw new Error('备份文件格式不合法');
+  }
+
+  const category = value as Record<string, unknown>;
+
+  if (
+    typeof category.id !== 'string' ||
+    !category.id.trim() ||
+    typeof category.name !== 'string' ||
+    !category.name.trim() ||
+    typeof category.color !== 'string' ||
+    !category.color.trim() ||
+    typeof category.sortOrder !== 'number' ||
+    !Number.isFinite(category.sortOrder) ||
+    typeof category.createdAt !== 'string' ||
+    Number.isNaN(Date.parse(category.createdAt)) ||
+    typeof category.updatedAt !== 'string' ||
+    Number.isNaN(Date.parse(category.updatedAt)) ||
+    !Array.isArray(category.subcategories)
+  ) {
+    throw new Error('备份文件格式不合法');
+  }
+
+  return {
+    id: category.id,
+    name: category.name,
+    color: category.color,
+    sortOrder: category.sortOrder,
+    createdAt: category.createdAt,
+    updatedAt: category.updatedAt,
+    subcategories: category.subcategories.map(assertSubcategoryRecord),
+  };
+}
+
+function assertSubcategoryRecord(value: unknown): SubcategoryRecord {
+  if (!value || typeof value !== 'object') {
+    throw new Error('备份文件格式不合法');
+  }
+
+  const subcategory = value as Record<string, unknown>;
+
+  if (
+    typeof subcategory.id !== 'string' ||
+    !subcategory.id.trim() ||
+    typeof subcategory.categoryId !== 'string' ||
+    !subcategory.categoryId.trim() ||
+    typeof subcategory.name !== 'string' ||
+    !subcategory.name.trim() ||
+    typeof subcategory.sortOrder !== 'number' ||
+    !Number.isFinite(subcategory.sortOrder) ||
+    typeof subcategory.createdAt !== 'string' ||
+    Number.isNaN(Date.parse(subcategory.createdAt)) ||
+    typeof subcategory.updatedAt !== 'string' ||
+    Number.isNaN(Date.parse(subcategory.updatedAt))
+  ) {
+    throw new Error('备份文件格式不合法');
+  }
+
+  return {
+    id: subcategory.id,
+    categoryId: subcategory.categoryId,
+    name: subcategory.name,
+    sortOrder: subcategory.sortOrder,
+    createdAt: subcategory.createdAt,
+    updatedAt: subcategory.updatedAt,
   };
 }

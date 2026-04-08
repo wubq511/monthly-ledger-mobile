@@ -23,11 +23,11 @@ import { BudgetMeter, BudgetMonthStatusList, OverspendRankingList } from './src/
 import { MonthlyLineChart } from './src/components/Charts';
 import { ExpenseForm } from './src/components/ExpenseForm';
 import { CategoryMonthRankingCard, CategoryRankingList } from './src/components/RankingLists';
-import { getCategoryDefinition } from './src/constants/categories';
 import { initializeDatabase } from './src/lib/database';
 import { formatMonthLabel, formatShortMonthLabel, getCurrentMonthKey, shiftMonth } from './src/lib/date';
 import { formatCurrency } from './src/lib/format';
 import { buildLedgerSummary, MONTHLY_BUDGET_LIMIT, type LedgerSummary } from './src/lib/ledgerSummary';
+import { useCategoryData } from './src/hooks/useCategoryData';
 import { useLedgerData } from './src/hooks/useLedgerData';
 import type { ExpenseDraft, ExpenseEntry, TabKey } from './src/types/ledger';
 
@@ -55,12 +55,30 @@ export default function App() {
 
 function LedgerApp() {
   const insets = useSafeAreaInsets();
-  const { entries, loading, error, addEntry, removeEntry, refresh } = useLedgerData();
+  const { entries, loading: entriesLoading, error: entriesError, addEntry, removeEntry, refresh } = useLedgerData();
+  const {
+    categories,
+    loading: categoriesLoading,
+    error: categoriesError,
+    refresh: refreshCategories,
+    createCategory,
+    renameCategory,
+    deleteCategory,
+    reorderCategories,
+    reorderSubcategories,
+    createSubcategory,
+    renameSubcategory,
+    deleteSubcategory,
+    getCategoryUsageSummary,
+    getSubcategoryUsageSummary,
+  } = useCategoryData();
   const [activeTab, setActiveTab] = useState<TabKey>('overview');
   const [selectedMonth, setSelectedMonth] = useState(getCurrentMonthKey());
   const [selectedRankingCategory, setSelectedRankingCategory] = useState<string | null>(null);
 
-  const summary = buildLedgerSummary(entries, selectedMonth, formatShortMonthLabel);
+  const loading = entriesLoading || categoriesLoading;
+  const error = entriesError ?? categoriesError;
+  const summary = buildLedgerSummary(entries, categories, selectedMonth, formatShortMonthLabel);
   const rankingCategories = Object.keys(summary.categoryMonthRanking);
   const rankingCategoryKey = rankingCategories.join('|');
   const hasSelectedRankingCategory = selectedRankingCategory
@@ -117,15 +135,30 @@ function LedgerApp() {
             selectedMonth={selectedMonth}
             onMonthChange={setSelectedMonth}
             summary={summary}
+            categoryColors={summary.categoryColors}
             onDelete={handleDeleteExpense}
           />
         ) : null}
 
         {activeTab === 'add' ? (
           <ExpenseForm
+            categories={categories}
+            categoriesLoading={categoriesLoading}
             onSubmit={handleAddExpense}
             onCompleteSequence={() => setActiveTab('overview')}
-            onImported={refresh}
+            onImported={async () => {
+              await Promise.all([refresh(), refreshCategories()]);
+            }}
+            onCreateCategory={createCategory}
+            onRenameCategory={renameCategory}
+            onDeleteCategory={deleteCategory}
+            onReorderCategories={reorderCategories}
+            onReorderSubcategories={reorderSubcategories}
+            onCreateSubcategory={createSubcategory}
+            onRenameSubcategory={renameSubcategory}
+            onDeleteSubcategory={deleteSubcategory}
+            getCategoryUsageSummary={getCategoryUsageSummary}
+            getSubcategoryUsageSummary={getSubcategoryUsageSummary}
           />
         ) : null}
 
@@ -135,6 +168,7 @@ function LedgerApp() {
             onMonthChange={setSelectedMonth}
             summary={summary}
             rankingCategories={rankingCategories}
+            categoryColors={summary.categoryColors}
             selectedRankingCategory={selectedRankingCategory}
             onSelectRankingCategory={setSelectedRankingCategory}
           />
@@ -170,11 +204,13 @@ function OverviewScreen({
   selectedMonth,
   onMonthChange,
   summary,
+  categoryColors,
   onDelete,
 }: {
   selectedMonth: string;
   onMonthChange: (monthKey: string) => void;
   summary: LedgerSummary;
+  categoryColors: Record<string, string>;
   onDelete: (entry: ExpenseEntry) => void;
 }) {
   const budgetStatus = summary.selectedBudget.isOverBudget
@@ -229,7 +265,7 @@ function OverviewScreen({
                   <View
                     style={[
                       styles.entryAccent,
-                      { backgroundColor: getCategoryDefinition(entry.category).color },
+                      { backgroundColor: categoryColors[entry.category] ?? '#7E6C61' },
                     ]}
                   />
                   <View style={styles.entryTextGroup}>
@@ -262,6 +298,7 @@ function TrendsScreen({
   onMonthChange,
   summary,
   rankingCategories,
+  categoryColors,
   selectedRankingCategory,
   onSelectRankingCategory,
 }: {
@@ -269,6 +306,7 @@ function TrendsScreen({
   onMonthChange: (monthKey: string) => void;
   summary: LedgerSummary;
   rankingCategories: string[];
+  categoryColors: Record<string, string>;
   selectedRankingCategory: string | null;
   onSelectRankingCategory: (category: string) => void;
 }) {
@@ -322,6 +360,7 @@ function TrendsScreen({
       <CategoryMonthRankingCard
         selectedCategory={selectedRankingCategory}
         categories={rankingCategories}
+        categoryColors={categoryColors}
         rankingMap={summary.categoryMonthRanking}
         onSelectCategory={onSelectRankingCategory}
       />

@@ -16,37 +16,106 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { BackupActions } from './BackupActions';
-import { CATEGORY_DEFINITIONS, DEFAULT_CATEGORY, getCategoryDefinition } from '../constants/categories';
+import { CategoryManagerModal } from './CategoryManagerModal';
+import {
+  DEFAULT_CATEGORY,
+  getRuntimeCategoryDefinition,
+  getRuntimeDefaultCategory,
+} from '../constants/categories';
 import { getCurrentMonthKey, getPreviousMonthKey, isValidMonthInput } from '../lib/date';
 import { getExpenseFormLayoutMetrics, getKeyboardInset } from '../lib/expenseFormLayout';
 import { getNextCategoryStep } from '../lib/expenseFormFlow';
-import type { ExpenseDraft } from '../types/ledger';
+import type {
+  CategoryRecord,
+  CategoryUsageSummary,
+  ExpenseDraft,
+  SubcategoryUsageSummary,
+} from '../types/ledger';
 
 interface ExpenseFormProps {
+  categories: CategoryRecord[];
+  categoriesLoading: boolean;
   onSubmit: (draft: ExpenseDraft) => Promise<void>;
   onCompleteSequence: () => void;
   onImported: () => Promise<void>;
+  onCreateCategory: (name: string) => Promise<void>;
+  onRenameCategory: (id: string, name: string) => Promise<void>;
+  onDeleteCategory: (id: string) => Promise<void>;
+  onReorderCategories: (idsInOrder: string[]) => Promise<void>;
+  onReorderSubcategories: (categoryId: string, idsInOrder: string[]) => Promise<void>;
+  onCreateSubcategory: (categoryId: string, name: string) => Promise<void>;
+  onRenameSubcategory: (id: string, name: string) => Promise<void>;
+  onDeleteSubcategory: (id: string) => Promise<void>;
+  getCategoryUsageSummary: (id: string) => Promise<CategoryUsageSummary>;
+  getSubcategoryUsageSummary: (id: string) => Promise<SubcategoryUsageSummary>;
 }
 
-export function ExpenseForm({ onSubmit, onCompleteSequence, onImported }: ExpenseFormProps) {
+export function ExpenseForm({
+  categories,
+  categoriesLoading,
+  onSubmit,
+  onCompleteSequence,
+  onImported,
+  onCreateCategory,
+  onRenameCategory,
+  onDeleteCategory,
+  onReorderCategories,
+  onReorderSubcategories,
+  onCreateSubcategory,
+  onRenameSubcategory,
+  onDeleteSubcategory,
+  getCategoryUsageSummary,
+  getSubcategoryUsageSummary,
+}: ExpenseFormProps) {
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
+  const defaultCategory = getRuntimeDefaultCategory(categories);
   const [monthKey, setMonthKey] = useState(getCurrentMonthKey());
   const [amount, setAmount] = useState('');
-  const [category, setCategory] = useState(DEFAULT_CATEGORY.name);
-  const [subcategory, setSubcategory] = useState(DEFAULT_CATEGORY.subcategories[0] ?? '');
+  const [category, setCategory] = useState(defaultCategory.name);
+  const [subcategory, setSubcategory] = useState(defaultCategory.subcategories[0] ?? '');
   const [note, setNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [keyboardInset, setKeyboardInset] = useState(0);
   const [backupModalVisible, setBackupModalVisible] = useState(false);
+  const [categoryModalVisible, setCategoryModalVisible] = useState(false);
   const amountInputRef = useRef<TextInput | null>(null);
 
-  const categoryDefinition = getCategoryDefinition(category);
+  const categoryDefinition = getRuntimeCategoryDefinition(categories, category);
+  const activeCategoryRecord = categories.find((item) => item.name === category) ?? null;
   const layoutMetrics = getExpenseFormLayoutMetrics({
     safeAreaBottom: insets.bottom,
     keyboardInset,
   });
   const keyboardVisible = layoutMetrics.compactSubmit;
+
+  useEffect(() => {
+    if (categories.length === 0) {
+      setCategory(DEFAULT_CATEGORY.name);
+      setSubcategory(DEFAULT_CATEGORY.subcategories[0] ?? '');
+      return;
+    }
+
+    const activeCategory = categories.find((item) => item.name === category);
+
+    if (!activeCategory) {
+      const nextDefault = getRuntimeDefaultCategory(categories);
+      setCategory(nextDefault.name);
+      setSubcategory(nextDefault.subcategories[0] ?? '');
+      return;
+    }
+
+    const subcategoryNames = activeCategory.subcategories.map((item) => item.name);
+
+    if (subcategory && !subcategoryNames.includes(subcategory)) {
+      setSubcategory(subcategoryNames[0] ?? '');
+      return;
+    }
+
+    if (!subcategory && subcategoryNames.length > 0) {
+      setSubcategory(subcategoryNames[0] ?? '');
+    }
+  }, [categories, category, subcategory]);
 
   useEffect(() => {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
@@ -68,7 +137,7 @@ export function ExpenseForm({ onSubmit, onCompleteSequence, onImported }: Expens
   }, [windowHeight]);
 
   const handleSelectCategory = (nextCategory: string) => {
-    const nextDefinition = getCategoryDefinition(nextCategory);
+    const nextDefinition = getRuntimeCategoryDefinition(categories, nextCategory);
     setCategory(nextCategory);
     setSubcategory(nextDefinition.subcategories[0] ?? '');
   };
@@ -76,6 +145,11 @@ export function ExpenseForm({ onSubmit, onCompleteSequence, onImported }: Expens
   const handleOpenBackupModal = () => {
     Keyboard.dismiss();
     setBackupModalVisible(true);
+  };
+
+  const handleOpenCategoryModal = () => {
+    Keyboard.dismiss();
+    setCategoryModalVisible(true);
   };
 
   const handleImported = async () => {
@@ -96,6 +170,11 @@ export function ExpenseForm({ onSubmit, onCompleteSequence, onImported }: Expens
       return;
     }
 
+    if (categories.length === 0) {
+      Alert.alert('暂无可用分类', '请先在分类管理里创建至少一个大类。');
+      return;
+    }
+
     setSubmitting(true);
 
     try {
@@ -107,7 +186,11 @@ export function ExpenseForm({ onSubmit, onCompleteSequence, onImported }: Expens
         note: note.trim() || null,
       });
 
-      const nextStep = getNextCategoryStep(category);
+      const nextStep = getNextCategoryStep(
+        categories,
+        category,
+        subcategory || null
+      );
       setAmount('');
       setNote('');
 
@@ -118,7 +201,8 @@ export function ExpenseForm({ onSubmit, onCompleteSequence, onImported }: Expens
       }
 
       if (nextStep.nextCategory) {
-        handleSelectCategory(nextStep.nextCategory);
+        setCategory(nextStep.nextCategory);
+        setSubcategory(nextStep.nextSubcategory ?? '');
       }
 
       amountInputRef.current?.focus();
@@ -142,10 +226,17 @@ export function ExpenseForm({ onSubmit, onCompleteSequence, onImported }: Expens
           <Text style={styles.heroTitle}>记下一笔，让总支出和趋势自动更新。</Text>
         </View>
 
-        <Pressable onPress={handleOpenBackupModal} style={styles.backupEntryButton}>
-          <Text style={styles.backupEntryLabel}>账单备份与导入</Text>
-          <Text style={styles.backupEntryArrow}>↗</Text>
-        </Pressable>
+        <View style={styles.managementButtons}>
+          <Pressable onPress={handleOpenBackupModal} style={styles.backupEntryButton}>
+            <Text style={styles.backupEntryLabel}>账单备份与导入</Text>
+            <Text style={styles.backupEntryArrow}>↗</Text>
+          </Pressable>
+
+          <Pressable onPress={handleOpenCategoryModal} style={styles.backupEntryButton}>
+            <Text style={styles.backupEntryLabel}>分类管理</Text>
+            <Text style={styles.backupEntryArrow}>↗</Text>
+          </Pressable>
+        </View>
 
         <View style={styles.fieldBlock}>
           <Text style={styles.fieldLabel}>月份</Text>
@@ -187,28 +278,36 @@ export function ExpenseForm({ onSubmit, onCompleteSequence, onImported }: Expens
 
         <View style={styles.fieldBlock}>
           <Text style={styles.fieldLabel}>大类</Text>
-          <View style={styles.chipGrid}>
-            {CATEGORY_DEFINITIONS.map((item) => {
-              const active = item.name === category;
+          {categories.length > 0 ? (
+            <View style={styles.chipGrid}>
+              {categories.map((item) => {
+                const active = item.name === category;
 
-              return (
-                <Pressable
-                  key={item.name}
-                  onPress={() => handleSelectCategory(item.name)}
-                  style={[
-                    styles.categoryChip,
-                    active && { backgroundColor: item.color, borderColor: item.color },
-                  ]}>
-                  <Text style={[styles.categoryChipText, active && styles.categoryChipTextActive]}>
-                    {item.name}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
+                return (
+                  <Pressable
+                    key={item.id}
+                    onPress={() => handleSelectCategory(item.name)}
+                    style={[
+                      styles.categoryChip,
+                      active && { backgroundColor: item.color, borderColor: item.color },
+                    ]}>
+                    <Text style={[styles.categoryChipText, active && styles.categoryChipTextActive]}>
+                      {item.name}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          ) : (
+            <View style={styles.inlineEmptyState}>
+              <Text style={styles.inlineEmptyStateText}>
+                {categoriesLoading ? '正在读取分类...' : '还没有可用大类，先去分类管理里新增一个。'}
+              </Text>
+            </View>
+          )}
         </View>
 
-        {categoryDefinition.subcategories.length > 0 ? (
+        {activeCategoryRecord && categoryDefinition.subcategories.length > 0 ? (
           <View style={styles.fieldBlock}>
             <Text style={styles.fieldLabel}>细分</Text>
             <View style={styles.quickRow}>
@@ -262,10 +361,27 @@ export function ExpenseForm({ onSubmit, onCompleteSequence, onImported }: Expens
         <Pressable
           onPress={handleSubmit}
           style={[styles.submitButton, keyboardVisible && styles.submitButtonKeyboard]}
-          disabled={submitting}>
+          disabled={submitting || categoriesLoading || categories.length === 0}>
           <Text style={styles.submitButtonText}>{submitting ? '保存中...' : '保存这笔支出'}</Text>
         </Pressable>
       </View>
+
+      <CategoryManagerModal
+        visible={categoryModalVisible}
+        loading={categoriesLoading}
+        categories={categories}
+        onClose={() => setCategoryModalVisible(false)}
+        onCreateCategory={onCreateCategory}
+        onRenameCategory={onRenameCategory}
+        onDeleteCategory={onDeleteCategory}
+        onReorderCategories={onReorderCategories}
+        onReorderSubcategories={onReorderSubcategories}
+        onCreateSubcategory={onCreateSubcategory}
+        onRenameSubcategory={onRenameSubcategory}
+        onDeleteSubcategory={onDeleteSubcategory}
+        getCategoryUsageSummary={getCategoryUsageSummary}
+        getSubcategoryUsageSummary={getSubcategoryUsageSummary}
+      />
 
       <Modal
         visible={backupModalVisible}
@@ -360,6 +476,9 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: 12,
   },
+  managementButtons: {
+    gap: 10,
+  },
   backupEntryLabel: {
     fontSize: 15,
     fontFamily: 'SpaceGrotesk_700Bold',
@@ -450,6 +569,20 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 10,
+  },
+  inlineEmptyState: {
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#DCCBBC',
+    backgroundColor: '#FBF7F1',
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+  },
+  inlineEmptyStateText: {
+    fontSize: 14,
+    lineHeight: 20,
+    fontFamily: 'SpaceGrotesk_400Regular',
+    color: '#7E6C61',
   },
   categoryChip: {
     paddingHorizontal: 14,

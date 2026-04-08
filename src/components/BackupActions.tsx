@@ -7,8 +7,15 @@ import { useSQLiteContext } from 'expo-sqlite';
 import * as Sharing from 'expo-sharing';
 
 import { buildBackupPayload, createBackupFileName, parseBackupJson } from '../lib/backup';
-import { exportAllExpenses, importExpensesMerge, replaceAllExpenses } from '../lib/database';
-import type { ExpenseEntry } from '../types/ledger';
+import {
+  exportAllCategories,
+  exportAllExpenses,
+  mergeCategoryDefinitions,
+  importExpensesMerge,
+  replaceAllCategoryDefinitions,
+  replaceAllExpenses,
+} from '../lib/database';
+import type { CategoryRecord, ExpenseEntry } from '../types/ledger';
 
 interface BackupActionsProps {
   onImported: () => Promise<void>;
@@ -18,12 +25,16 @@ function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
 
-function formatMergeSummary(importedCount: number, skippedCount: number) {
-  return `新增 ${importedCount} 条，跳过 ${skippedCount} 条重复记录`;
+function formatMergeSummary(
+  importedCount: number,
+  skippedCount: number,
+  categories: { imported: number; skipped: number; importedSubcategories: number; skippedSubcategories: number }
+) {
+  return `新增 ${importedCount} 条，跳过 ${skippedCount} 条重复记录；分类新增 ${categories.imported} 个，跳过 ${categories.skipped} 个；细分新增 ${categories.importedSubcategories} 个，跳过 ${categories.skippedSubcategories} 个`;
 }
 
-function formatReplaceSummary(importedCount: number) {
-  return `已清空当前账本，并恢复 ${importedCount} 条记录`;
+function formatReplaceSummary(importedCount: number, categoryCount: number) {
+  return `已清空当前账本，并恢复 ${importedCount} 条记录与 ${categoryCount} 个大类`;
 }
 
 export function BackupActions({ onImported }: BackupActionsProps) {
@@ -31,13 +42,22 @@ export function BackupActions({ onImported }: BackupActionsProps) {
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const busy = busyLabel !== null;
 
-  const runMergeImport = async (entries: ExpenseEntry[]) => {
+  const runMergeImport = async (entries: ExpenseEntry[], categories: CategoryRecord[]) => {
     setBusyLabel('正在合并导入...');
 
     try {
+      const categoryResult = await mergeCategoryDefinitions(db, categories);
       const result = await importExpensesMerge(db, entries);
       await onImported();
-      Alert.alert('导入完成', formatMergeSummary(result.importedCount, result.skippedCount));
+      Alert.alert(
+        '导入完成',
+        formatMergeSummary(result.importedCount, result.skippedCount, {
+          imported: categoryResult.importedCategoryCount,
+          skipped: categoryResult.skippedCategoryCount,
+          importedSubcategories: categoryResult.importedSubcategoryCount,
+          skippedSubcategories: categoryResult.skippedSubcategoryCount,
+        })
+      );
     } catch (error) {
       Alert.alert('导入失败', getErrorMessage(error, '合并导入失败'));
     } finally {
@@ -45,13 +65,14 @@ export function BackupActions({ onImported }: BackupActionsProps) {
     }
   };
 
-  const runReplaceRestore = async (entries: ExpenseEntry[]) => {
+  const runReplaceRestore = async (entries: ExpenseEntry[], categories: CategoryRecord[]) => {
     setBusyLabel('正在覆盖恢复...');
 
     try {
+      await replaceAllCategoryDefinitions(db, categories);
       const result = await replaceAllExpenses(db, entries);
       await onImported();
-      Alert.alert('恢复完成', formatReplaceSummary(result.importedCount));
+      Alert.alert('恢复完成', formatReplaceSummary(result.importedCount, categories.length));
     } catch (error) {
       Alert.alert('恢复失败', getErrorMessage(error, '覆盖恢复失败'));
     } finally {
@@ -63,9 +84,14 @@ export function BackupActions({ onImported }: BackupActionsProps) {
     setBusyLabel('正在生成备份...');
 
     try {
-      const entries = await exportAllExpenses(db);
+      const [entries, categories] = await Promise.all([exportAllExpenses(db), exportAllCategories(db)]);
       const exportedAt = new Date().toISOString();
-      const payload = buildBackupPayload(entries, Constants.expoConfig?.version ?? 'unknown', exportedAt);
+      const payload = buildBackupPayload(
+        entries,
+        categories,
+        Constants.expoConfig?.version ?? 'unknown',
+        exportedAt
+      );
       const directory = new Directory(Paths.cache, 'backups');
       directory.create({ idempotent: true, intermediates: true });
 
@@ -108,31 +134,35 @@ export function BackupActions({ onImported }: BackupActionsProps) {
       const file = new File(result.assets[0].uri);
       const backup = parseBackupJson(await file.text());
 
-      Alert.alert('选择恢复方式', `检测到 ${backup.entries.length} 条记录，请选择恢复方式。`, [
+      Alert.alert(
+        '选择恢复方式',
+        `检测到 ${backup.entries.length} 条记录和 ${backup.categories.length} 个大类，请选择恢复方式。`,
+        [
         { text: '取消', style: 'cancel' },
         {
           text: '合并导入',
           onPress: () => {
-            void runMergeImport(backup.entries);
+            void runMergeImport(backup.entries, backup.categories);
           },
         },
         {
           text: '覆盖恢复',
           style: 'destructive',
           onPress: () => {
-            Alert.alert('覆盖当前账本？', '当前账本会被清空，然后恢复备份中的全部记录。', [
+            Alert.alert('覆盖当前账本？', '当前账本和分类配置会被清空，然后恢复备份中的全部内容。', [
               { text: '取消', style: 'cancel' },
               {
                 text: '确认覆盖',
                 style: 'destructive',
                 onPress: () => {
-                  void runReplaceRestore(backup.entries);
+                  void runReplaceRestore(backup.entries, backup.categories);
                 },
               },
             ]);
           },
         },
-      ]);
+      ]
+      );
     } catch (error) {
       Alert.alert('导入失败', getErrorMessage(error, '导入备份失败'));
     } finally {
