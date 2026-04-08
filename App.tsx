@@ -2,8 +2,6 @@ import { Suspense, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  KeyboardAvoidingView,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -124,15 +122,11 @@ function LedgerApp() {
         ) : null}
 
         {activeTab === 'add' ? (
-          <KeyboardAvoidingView
-            style={styles.flex}
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-            <ExpenseForm
-              onSubmit={handleAddExpense}
-              onCompleteSequence={() => setActiveTab('overview')}
-              onImported={refresh}
-            />
-          </KeyboardAvoidingView>
+          <ExpenseForm
+            onSubmit={handleAddExpense}
+            onCompleteSequence={() => setActiveTab('overview')}
+            onImported={refresh}
+          />
         ) : null}
 
         {activeTab === 'trends' ? (
@@ -194,7 +188,7 @@ function OverviewScreen({
   return (
     <ScrollView
       style={styles.flex}
-      contentContainerStyle={[styles.screenContent, styles.overviewContent]}
+      contentContainerStyle={styles.screenContent}
       showsVerticalScrollIndicator={false}>
       <LinearGradient
         colors={['#171311', '#37271E', '#744937']}
@@ -438,10 +432,6 @@ const styles = StyleSheet.create({
     paddingBottom: 140,
     gap: 18,
   },
-  overviewContent: {
-    flexGrow: 1,
-    paddingBottom: 116,
-  },
   heroPanel: {
     borderRadius: 34,
     paddingHorizontal: 22,
@@ -500,7 +490,6 @@ const styles = StyleSheet.create({
     gap: 14,
   },
   overviewBillSection: {
-    flexGrow: 1,
     borderRadius: 28,
     borderWidth: 1,
     borderColor: '#E4D5C8',
@@ -508,11 +497,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     paddingVertical: 18,
     gap: 14,
-    minHeight: 260,
   },
   overviewBillEmpty: {
-    flexGrow: 1,
-    justifyContent: 'center',
+    paddingTop: 6,
   },
   sectionEyebrow: {
     fontSize: 12,

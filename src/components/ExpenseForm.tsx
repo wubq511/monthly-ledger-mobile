@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   Alert,
   Keyboard,
+  type KeyboardEvent,
   Modal,
   Platform,
   Pressable,
@@ -9,6 +10,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -16,6 +18,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BackupActions } from './BackupActions';
 import { CATEGORY_DEFINITIONS, DEFAULT_CATEGORY, getCategoryDefinition } from '../constants/categories';
 import { getCurrentMonthKey, getPreviousMonthKey, isValidMonthInput } from '../lib/date';
+import { getExpenseFormLayoutMetrics, getKeyboardInset } from '../lib/expenseFormLayout';
 import { getNextCategoryStep } from '../lib/expenseFormFlow';
 import type { ExpenseDraft } from '../types/ledger';
 
@@ -27,35 +30,42 @@ interface ExpenseFormProps {
 
 export function ExpenseForm({ onSubmit, onCompleteSequence, onImported }: ExpenseFormProps) {
   const insets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
   const [monthKey, setMonthKey] = useState(getCurrentMonthKey());
   const [amount, setAmount] = useState('');
   const [category, setCategory] = useState(DEFAULT_CATEGORY.name);
   const [subcategory, setSubcategory] = useState(DEFAULT_CATEGORY.subcategories[0] ?? '');
   const [note, setNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const [keyboardInset, setKeyboardInset] = useState(0);
   const [backupModalVisible, setBackupModalVisible] = useState(false);
   const amountInputRef = useRef<TextInput | null>(null);
 
   const categoryDefinition = getCategoryDefinition(category);
-  const footerInset = Math.max(insets.bottom, 12) + 96;
-  const contentBottomPadding = keyboardVisible ? 128 : footerInset + 44;
+  const layoutMetrics = getExpenseFormLayoutMetrics({
+    safeAreaBottom: insets.bottom,
+    keyboardInset,
+  });
+  const keyboardVisible = layoutMetrics.compactSubmit;
 
   useEffect(() => {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
     const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-    const showSubscription = Keyboard.addListener(showEvent, () => {
-      setKeyboardVisible(true);
-    });
+    const handleShow = (event: KeyboardEvent) => {
+      setKeyboardInset(
+        getKeyboardInset(windowHeight, event.endCoordinates.screenY, event.endCoordinates.height)
+      );
+    };
+    const showSubscription = Keyboard.addListener(showEvent, handleShow);
     const hideSubscription = Keyboard.addListener(hideEvent, () => {
-      setKeyboardVisible(false);
+      setKeyboardInset(0);
     });
 
     return () => {
       showSubscription.remove();
       hideSubscription.remove();
     };
-  }, []);
+  }, [windowHeight]);
 
   const handleSelectCategory = (nextCategory: string) => {
     const nextDefinition = getCategoryDefinition(nextCategory);
@@ -124,7 +134,7 @@ export function ExpenseForm({ onSubmit, onCompleteSequence, onImported }: Expens
     <View style={styles.container}>
       <ScrollView
         style={styles.scroll}
-        contentContainerStyle={[styles.content, { paddingBottom: contentBottomPadding }]}
+        contentContainerStyle={[styles.content, { paddingBottom: layoutMetrics.contentBottomPadding }]}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}>
         <View style={styles.hero}>
@@ -246,8 +256,8 @@ export function ExpenseForm({ onSubmit, onCompleteSequence, onImported }: Expens
       <View
         style={
           keyboardVisible
-            ? styles.submitDockKeyboard
-            : [styles.submitDock, { paddingBottom: footerInset }]
+            ? [styles.submitDockKeyboard, { bottom: layoutMetrics.submitBottomOffset }]
+            : [styles.submitDock, { paddingBottom: layoutMetrics.submitFooterInset }]
         }>
         <Pressable
           onPress={handleSubmit}
