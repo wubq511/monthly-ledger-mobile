@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { PanResponder, StyleSheet, Text, View } from 'react-native';
 import Svg, {
   Circle,
   Defs,
@@ -12,19 +12,19 @@ import Svg, {
 } from 'react-native-svg';
 
 import { formatCompactCurrency } from '../lib/format';
+import { getBudgetLabelLayout } from '../lib/chartLayout';
 import type { MonthlyTrendPoint } from '../lib/ledgerSummary';
+import { getTrendMonthAfterSwipe } from '../lib/trendWindow';
 
 const CHART_HEIGHT = 212;
 const CHART_PADDING = 18;
+const BUDGET_LABEL_WIDTH = 76;
 
 interface MonthlyLineChartProps {
   data: MonthlyTrendPoint[];
   budgetLimit: number;
-}
-
-interface MonthlyBarChartProps {
-  data: MonthlyTrendPoint[];
-  budgetLimit: number;
+  selectedMonth: string;
+  onChangeMonth: (monthKey: string) => void;
 }
 
 function EmptyChart({ title, body }: { title: string; body: string }) {
@@ -40,7 +40,12 @@ function getChartScale(data: MonthlyTrendPoint[], budgetLimit: number) {
   return Math.max(...data.map((item) => item.value), budgetLimit, 0);
 }
 
-export function MonthlyLineChart({ data, budgetLimit }: MonthlyLineChartProps) {
+export function MonthlyLineChart({
+  data,
+  budgetLimit,
+  selectedMonth,
+  onChangeMonth,
+}: MonthlyLineChartProps) {
   const [width, setWidth] = useState(0);
   const scaleMax = getChartScale(data, budgetLimit);
   const chartWidth = Math.max(width, 280);
@@ -67,14 +72,39 @@ export function MonthlyLineChart({ data, budgetLimit }: MonthlyLineChartProps) {
     CHART_PADDING + innerHeight
   } L ${coordinates[0].x} ${CHART_PADDING + innerHeight} Z`;
 
+  const budgetLabelLayout = getBudgetLabelLayout(chartWidth, CHART_PADDING, BUDGET_LABEL_WIDTH);
+  const budgetLabelY = Math.max(CHART_PADDING + 12, budgetY - 8);
+  const panResponder = PanResponder.create({
+    onMoveShouldSetPanResponder: (_, gestureState) =>
+      Math.abs(gestureState.dx) > 12 && Math.abs(gestureState.dx) > Math.abs(gestureState.dy),
+    onPanResponderRelease: (_, gestureState) => {
+      const nextMonth = getTrendMonthAfterSwipe(selectedMonth, gestureState.dx);
+
+      if (nextMonth !== selectedMonth) {
+        onChangeMonth(nextMonth);
+      }
+    },
+  });
+
   return (
-    <View style={styles.chartFrame} onLayout={(event) => setWidth(event.nativeEvent.layout.width)}>
+    <View
+      style={styles.chartFrame}
+      onLayout={(event) => setWidth(event.nativeEvent.layout.width)}
+      {...panResponder.panHandlers}>
       <View style={styles.chartHeader}>
-        <View>
-          <Text style={styles.chartTitle}>近六个月支出曲线</Text>
-          <Text style={styles.chartMeta}>橘线表示当月总支出，虚线表示 2000 元预算基准。</Text>
+        <View style={styles.chartHeaderMain}>
+          <Text style={styles.chartTitle} numberOfLines={1}>
+            六个月支出曲线
+          </Text>
         </View>
-        <Text style={styles.chartPeak}>峰值 {formatCompactCurrency(scaleMax)}</Text>
+        <View style={styles.chartPeakStack}>
+          <Text style={styles.chartPeakLabel} numberOfLines={1}>
+            峰值
+          </Text>
+          <Text style={styles.chartPeakValue} numberOfLines={1}>
+            {formatCompactCurrency(scaleMax)}
+          </Text>
+        </View>
       </View>
 
       <Svg width="100%" height={CHART_HEIGHT}>
@@ -115,7 +145,21 @@ export function MonthlyLineChart({ data, budgetLimit }: MonthlyLineChartProps) {
           strokeWidth={2}
         />
 
-        <SvgText x={chartWidth - CHART_PADDING - 4} y={budgetY - 8} fill="#657C50" fontSize="11" textAnchor="end">
+        <Rect
+          x={budgetLabelLayout.left}
+          y={budgetLabelY - 12}
+          width={BUDGET_LABEL_WIDTH}
+          height={18}
+          rx={9}
+          fill="#FBF7F1"
+          opacity={0.96}
+        />
+        <SvgText
+          x={budgetLabelLayout.textX}
+          y={budgetLabelY}
+          fill="#657C50"
+          fontSize="11"
+          textAnchor="end">
           预算 2000
         </SvgText>
 
@@ -127,7 +171,7 @@ export function MonthlyLineChart({ data, budgetLimit }: MonthlyLineChartProps) {
             key={point.key}
             cx={point.x}
             cy={point.y}
-            r={4.5}
+            r={point.key === selectedMonth ? 5.5 : 4.5}
             fill="#F9F3EC"
             stroke={point.value > budgetLimit ? '#C04D45' : '#657C50'}
             strokeWidth={2}
@@ -139,103 +183,12 @@ export function MonthlyLineChart({ data, budgetLimit }: MonthlyLineChartProps) {
             key={`${point.key}-label`}
             x={point.x}
             y={CHART_HEIGHT - 4}
-            fill="#7E6C61"
+            fill={point.key === selectedMonth ? '#231B16' : '#7E6C61'}
             fontSize="12"
             textAnchor="middle">
             {point.label}
           </SvgText>
         ))}
-      </Svg>
-    </View>
-  );
-}
-
-export function MonthlyBarChart({ data, budgetLimit }: MonthlyBarChartProps) {
-  const [width, setWidth] = useState(0);
-  const scaleMax = getChartScale(data, budgetLimit);
-  const chartWidth = Math.max(width, 280);
-  const innerWidth = chartWidth - CHART_PADDING * 2;
-  const innerHeight = CHART_HEIGHT - CHART_PADDING * 2;
-  const barGap = 10;
-  const barWidth = Math.max(18, (innerWidth - barGap * (data.length - 1)) / data.length);
-
-  if (scaleMax <= 0) {
-    return <EmptyChart title="近月柱状图会在你开始跨月记账后出现" body="后续会和 2000 元预算线一起对照。" />;
-  }
-
-  const budgetY = CHART_PADDING + innerHeight - (budgetLimit / scaleMax) * innerHeight;
-
-  return (
-    <View style={styles.chartFrame} onLayout={(event) => setWidth(event.nativeEvent.layout.width)}>
-      <View style={styles.chartHeader}>
-        <View>
-          <Text style={styles.chartTitle}>近六个月总支出</Text>
-          <Text style={styles.chartMeta}>绿色表示在预算内，橘红表示超出 2000 元上限。</Text>
-        </View>
-        <Text style={styles.chartPeak}>最高 {formatCompactCurrency(scaleMax)}</Text>
-      </View>
-
-      <Svg width="100%" height={CHART_HEIGHT}>
-        {[0, 1, 2, 3].map((step) => {
-          const y = CHART_PADDING + (innerHeight / 3) * step;
-          return (
-            <Line
-              key={step}
-              x1={CHART_PADDING}
-              y1={y}
-              x2={chartWidth - CHART_PADDING}
-              y2={y}
-              stroke="#E1D3C4"
-              strokeDasharray="4 6"
-              strokeWidth={1}
-            />
-          );
-        })}
-
-        <Line
-          x1={CHART_PADDING}
-          y1={budgetY}
-          x2={chartWidth - CHART_PADDING}
-          y2={budgetY}
-          stroke="#657C50"
-          strokeDasharray="6 6"
-          strokeWidth={2}
-        />
-
-        {data.map((item, index) => {
-          const height = scaleMax === 0 ? 0 : (item.value / scaleMax) * innerHeight;
-          const x = CHART_PADDING + index * (barWidth + barGap);
-          const y = CHART_PADDING + innerHeight - height;
-          const fill =
-            item.value > budgetLimit ? '#C66039' : index === data.length - 1 ? '#7C8B69' : '#9AAA88';
-
-          return (
-            <Rect
-              key={item.key}
-              x={x}
-              y={y}
-              width={barWidth}
-              height={Math.max(height, 6)}
-              rx={barWidth / 3}
-              fill={fill}
-            />
-          );
-        })}
-
-        {data.map((item, index) => {
-          const x = CHART_PADDING + index * (barWidth + barGap) + barWidth / 2;
-          return (
-            <SvgText
-              key={`${item.key}-label`}
-              x={x}
-              y={CHART_HEIGHT - 4}
-              fill="#7E6C61"
-              fontSize="12"
-              textAnchor="middle">
-              {item.label}
-            </SvgText>
-          );
-        })}
       </Svg>
     </View>
   );
@@ -254,7 +207,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    gap: 16,
+    gap: 12,
+  },
+  chartHeaderMain: {
+    flex: 1,
+    minWidth: 0,
   },
   chartTitle: {
     fontSize: 16,
@@ -262,18 +219,24 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#231B16',
   },
-  chartMeta: {
-    marginTop: 4,
-    fontSize: 12,
-    lineHeight: 17,
-    fontFamily: 'SpaceGrotesk_400Regular',
-    color: '#7E6C61',
+  chartPeakStack: {
+    alignItems: 'flex-end',
+    justifyContent: 'flex-start',
+    flexShrink: 1,
+    minWidth: 0,
+    maxWidth: 72,
   },
-  chartPeak: {
+  chartPeakLabel: {
+    fontSize: 11,
+    fontFamily: 'SpaceGrotesk_500Medium',
+    color: '#8A7567',
+  },
+  chartPeakValue: {
     fontSize: 12,
     fontFamily: 'SpaceGrotesk_700Bold',
     fontWeight: '700',
     color: '#5E4D43',
+    textAlign: 'right',
   },
   emptyChart: {
     borderRadius: 28,

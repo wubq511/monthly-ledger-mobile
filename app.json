@@ -18,7 +18,7 @@
     "android": {
       "package": "com.h.monthlyledger",
       "icon": "./assets/AndroidAPP.png",
-      "versionCode": 5,
+      "versionCode": 6,
       "adaptiveIcon": {
         "foregroundImage": "./assets/AndroidAPP.png",
         "backgroundColor": "#F7F0E8"

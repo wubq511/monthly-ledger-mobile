@@ -12,7 +12,7 @@ export function CategoryRankingList({
   emptyBody,
 }: {
   title: string;
-  body: string;
+  body?: string;
   items: CategoryTotal[];
   emptyTitle: string;
   emptyBody: string;
@@ -21,7 +21,7 @@ export function CategoryRankingList({
     return (
       <View style={styles.panel}>
         <Text style={styles.panelTitle}>{title}</Text>
-        <Text style={styles.panelBody}>{body}</Text>
+        {body ? <Text style={styles.panelBody}>{body}</Text> : null}
         <View style={styles.emptyBlock}>
           <Text style={styles.emptyTitle}>{emptyTitle}</Text>
           <Text style={styles.emptyBody}>{emptyBody}</Text>
@@ -33,7 +33,7 @@ export function CategoryRankingList({
   return (
     <View style={styles.panel}>
       <Text style={styles.panelTitle}>{title}</Text>
-      <Text style={styles.panelBody}>{body}</Text>
+      {body ? <Text style={styles.panelBody}>{body}</Text> : null}
 
       <View style={styles.list}>
         {items.map((item, index) => (
@@ -81,7 +81,6 @@ export function CategoryMonthRankingCard({
     return (
       <View style={styles.panel}>
         <Text style={styles.panelTitle}>同分类跨月排名</Text>
-        <Text style={styles.panelBody}>先有至少一个分类在不同月份出现，这里才会生成跨月排名。</Text>
       </View>
     );
   }
@@ -91,7 +90,6 @@ export function CategoryMonthRankingCard({
   return (
     <View style={styles.panel}>
       <Text style={styles.panelTitle}>同分类跨月排名</Text>
-      <Text style={styles.panelBody}>切换分类，查看它在哪些月份花费最高。</Text>
 
       <View style={styles.chipWrap}>
         {categories.map((category) => {

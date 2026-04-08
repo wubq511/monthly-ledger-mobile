@@ -1,5 +1,5 @@
 import { CATEGORY_DEFINITIONS, getCategoryDefinition } from '../constants/categories';
-import { shiftMonth } from './date';
+import { buildTrendWindowMonths } from './trendWindow';
 import type { ExpenseEntry } from '../types/ledger';
 
 export interface CategoryTotal {
@@ -48,6 +48,8 @@ export interface LedgerSummary {
   monthlyBudgetRows: BudgetMonthRow[];
   overspendRanking: BudgetMonthRow[];
   totalOverspend: number;
+  totalRemaining: number;
+  netBudgetBalance: number;
   averageMonthlyOverspend: number;
   overspendMonthCount: number;
   monthlyTrend: MonthlyTrendPoint[];
@@ -157,16 +159,19 @@ export function buildLedgerSummary(
     .sort(sortBudgetRowsByMonth);
 
   let totalOverspend = 0;
+  let totalRemaining = 0;
   let overspendMonthCount = 0;
 
   for (const row of monthlyBudgetRows) {
     totalOverspend += row.overspend;
+    totalRemaining += row.remaining;
 
     if (row.isOverBudget) {
       overspendMonthCount += 1;
     }
   }
 
+  const netBudgetBalance = totalRemaining - totalOverspend;
   const averageMonthlyOverspend = trackedMonthCount > 0 ? totalOverspend / trackedMonthCount : 0;
   const overspendRanking = monthlyBudgetRows.filter((row) => row.isOverBudget).sort(sortBudgetRowsByOverspend);
 
@@ -204,8 +209,7 @@ export function buildLedgerSummary(
     defaultCategoryRankingName = Object.keys(categoryMonthRanking)[0] ?? null;
   }
 
-  const monthlyTrend = Array.from({ length: 6 }, (_, index) => {
-    const monthKey = shiftMonth(selectedMonth, index - 5);
+  const monthlyTrend = buildTrendWindowMonths(selectedMonth).map((monthKey) => {
     return {
       key: monthKey,
       label: formatShortMonthLabel(monthKey),
@@ -235,6 +239,8 @@ export function buildLedgerSummary(
     monthlyBudgetRows,
     overspendRanking,
     totalOverspend,
+    totalRemaining,
+    netBudgetBalance,
     averageMonthlyOverspend,
     overspendMonthCount,
     monthlyTrend,

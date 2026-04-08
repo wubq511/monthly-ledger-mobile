@@ -87,18 +87,6 @@ function formatStatusText(snapshot: BudgetSnapshot) {
     : `结余 ${formatCurrency(snapshot.remaining)}`;
 }
 
-function formatSupportText(snapshot: BudgetSnapshot, budgetLimit: number) {
-  if (snapshot.isOverBudget) {
-    return `本月支出已超过 ${formatCurrency(budgetLimit)} 预算线。`;
-  }
-
-  if (snapshot.utilizationRate >= 0.8) {
-    return `距离预算上限还剩 ${formatCurrency(snapshot.remaining)}，本月已接近上限。`;
-  }
-
-  return `距离预算上限还剩 ${formatCurrency(snapshot.remaining)}。`;
-}
-
 export function BudgetMeter({
   budget,
   budgetLimit,
@@ -124,8 +112,6 @@ export function BudgetMeter({
       <View style={[styles.track, { backgroundColor: colors.track }]}>
         <View style={[styles.fill, { width: `${Math.max(progress * 100, 8)}%`, backgroundColor: colors.fill }]} />
       </View>
-
-      <Text style={[styles.supportText, { color: colors.muted }]}>{formatSupportText(budget, budgetLimit)}</Text>
     </View>
   );
 }
@@ -147,7 +133,6 @@ export function BudgetMonthStatusList({
   return (
     <View style={styles.panel}>
       <Text style={styles.panelTitle}>每月预算状态</Text>
-      <Text style={styles.panelBody}>按月份查看是结余还是超支，方便做月度复盘。</Text>
 
       <View style={styles.list}>
         {rows.map((row) => {
@@ -180,7 +165,6 @@ export function OverspendRankingList({
   return (
     <View style={styles.panel}>
       <Text style={styles.panelTitle}>超支月份排名</Text>
-      <Text style={styles.panelBody}>只列出超支月份，按超支金额从高到低排序。</Text>
 
       {rows.length > 0 ? (
         <View style={styles.list}>
@@ -243,11 +227,6 @@ const styles = StyleSheet.create({
     height: '100%',
     borderRadius: 999,
   },
-  supportText: {
-    fontSize: 13,
-    lineHeight: 19,
-    fontFamily: 'SpaceGrotesk_400Regular',
-  },
   panel: {
     borderRadius: 28,
     borderWidth: 1,
@@ -263,12 +242,6 @@ const styles = StyleSheet.create({
     fontFamily: 'SpaceGrotesk_700Bold',
     fontWeight: '700',
     color: '#231B16',
-  },
-  panelBody: {
-    fontSize: 13,
-    lineHeight: 19,
-    fontFamily: 'SpaceGrotesk_400Regular',
-    color: '#7E6C61',
   },
   list: {
     gap: 10,

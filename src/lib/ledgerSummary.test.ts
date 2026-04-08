@@ -67,6 +67,8 @@ describe('buildLedgerSummary', () => {
     expect(MONTHLY_BUDGET_LIMIT).toBe(2000);
     expect(summary.trackedMonthCount).toBe(3);
     expect(summary.totalOverspend).toBe(550);
+    expect(summary.totalRemaining).toBe(1200);
+    expect(summary.netBudgetBalance).toBe(650);
     expect(summary.averageMonthlyOverspend).toBeCloseTo(550 / 3, 2);
     expect(summary.overspendMonthCount).toBe(2);
     expect(summary.selectedBudget.remaining).toBe(0);
@@ -95,9 +97,34 @@ describe('buildLedgerSummary', () => {
     const february = buildLedgerSummary(entries, '2026-02', (monthKey) => monthKey.slice(5));
 
     expect(empty.totalOverspend).toBe(0);
+    expect(empty.totalRemaining).toBe(0);
+    expect(empty.netBudgetBalance).toBe(0);
     expect(empty.averageMonthlyOverspend).toBe(0);
     expect(empty.selectedMonthRanking).toEqual([]);
     expect(february.selectedBudget.overspend).toBe(0);
     expect(february.selectedBudget.remaining).toBe(MONTHLY_BUDGET_LIMIT - 800);
+  });
+
+  it('returns a negative net budget balance when cumulative overspend exceeds total remaining', () => {
+    const overspendHeavy = buildLedgerSummary(
+      [
+        ...entries,
+        {
+          id: '7',
+          monthKey: '2026-04',
+          amount: 3500,
+          category: '其他',
+          subcategory: null,
+          note: null,
+          createdAt: '2026-04-02T00:00:00.000Z',
+        },
+      ],
+      '2026-04',
+      (monthKey) => monthKey.slice(5)
+    );
+
+    expect(overspendHeavy.totalOverspend).toBe(2050);
+    expect(overspendHeavy.totalRemaining).toBe(1200);
+    expect(overspendHeavy.netBudgetBalance).toBe(-850);
   });
 });
