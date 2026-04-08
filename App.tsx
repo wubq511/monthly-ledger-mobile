@@ -22,8 +22,7 @@ import {
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { BudgetMeter, BudgetMonthStatusList, OverspendRankingList } from './src/components/BudgetPanels';
-import { BackupActions } from './src/components/BackupActions';
-import { MonthlyBarChart, MonthlyLineChart } from './src/components/Charts';
+import { MonthlyLineChart } from './src/components/Charts';
 import { ExpenseForm } from './src/components/ExpenseForm';
 import { CategoryMonthRankingCard, CategoryRankingList } from './src/components/RankingLists';
 import { getCategoryDefinition } from './src/constants/categories';
@@ -86,7 +85,6 @@ function LedgerApp() {
   const handleAddExpense = async (draft: ExpenseDraft) => {
     await addEntry(draft);
     setSelectedMonth(draft.monthKey);
-    setActiveTab('overview');
   };
 
   const handleDeleteExpense = (entry: ExpenseEntry) => {
@@ -128,8 +126,12 @@ function LedgerApp() {
         {activeTab === 'add' ? (
           <KeyboardAvoidingView
             style={styles.flex}
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-            <ExpenseForm onSubmit={handleAddExpense} />
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+            <ExpenseForm
+              onSubmit={handleAddExpense}
+              onCompleteSequence={() => setActiveTab('overview')}
+              onImported={refresh}
+            />
           </KeyboardAvoidingView>
         ) : null}
 
@@ -141,7 +143,6 @@ function LedgerApp() {
             rankingCategories={rankingCategories}
             selectedRankingCategory={selectedRankingCategory}
             onSelectRankingCategory={setSelectedRankingCategory}
-            onDataImported={refresh}
           />
         ) : null}
 
@@ -182,15 +183,18 @@ function OverviewScreen({
   summary: LedgerSummary;
   onDelete: (entry: ExpenseEntry) => void;
 }) {
-  const topCategory = summary.selectedMonthRanking[0];
   const budgetStatus = summary.selectedBudget.isOverBudget
     ? `超支 ${formatCurrency(summary.selectedBudget.overspend)}`
     : `结余 ${formatCurrency(summary.selectedBudget.remaining)}`;
+  const netBudgetStatus =
+    summary.netBudgetBalance >= 0
+      ? `净结余 ${formatCurrency(summary.netBudgetBalance)}`
+      : `净超支 ${formatCurrency(Math.abs(summary.netBudgetBalance))}`;
 
   return (
     <ScrollView
       style={styles.flex}
-      contentContainerStyle={styles.screenContent}
+      contentContainerStyle={[styles.screenContent, styles.overviewContent]}
       showsVerticalScrollIndicator={false}>
       <LinearGradient
         colors={['#171311', '#37271E', '#744937']}
@@ -200,13 +204,6 @@ function OverviewScreen({
         <Text style={styles.heroKicker}>MONTH BUDGET</Text>
         <MonthSwitcher monthKey={selectedMonth} onChange={onMonthChange} light />
         <Text style={styles.heroTotal}>{formatCurrency(summary.selectedTotal)}</Text>
-        <Text style={styles.heroCaption}>
-          {topCategory
-            ? `${formatMonthLabel(selectedMonth)} 花得最多的是 ${topCategory.name}，占本月 ${Math.round(
-                topCategory.ratio * 100
-              )}%`
-            : '这是月份账本，所有统计都按月份自动更新。'}
-        </Text>
 
         <BudgetMeter budget={summary.selectedBudget} budgetLimit={MONTHLY_BUDGET_LIMIT} light />
 
@@ -217,23 +214,22 @@ function OverviewScreen({
             label="平均每月超支"
             value={formatCurrency(summary.averageMonthlyOverspend)}
           />
-          <MetricChip label="超支月份数" value={`${summary.overspendMonthCount} 个`} />
+          <MetricChip label="综合超支情况" value={netBudgetStatus} />
         </View>
       </LinearGradient>
 
       <CategoryRankingList
         title="本月分类消费排名"
-        body={`按 ${formatMonthLabel(selectedMonth)} 的支出金额排序，越靠前说明本月越花钱。`}
         items={summary.selectedMonthRanking}
         emptyTitle="本月暂无分类数据"
         emptyBody="去“记账”页选择月份后录入第一笔支出。"
       />
 
-      <View style={styles.section}>
-        <SectionHeader title="本月账单" body="这里只显示月份，不显示具体日期。点击可删除错误账单。" />
+      <View style={styles.overviewBillSection}>
+        <SectionHeader title="本月账单" />
         {summary.selectedEntries.length > 0 ? (
           <View style={styles.entryList}>
-            {summary.selectedEntries.slice(0, 8).map((entry) => (
+            {summary.selectedEntries.map((entry) => (
               <Pressable key={entry.id} style={styles.entryRow} onPress={() => onDelete(entry)}>
                 <View style={styles.entryLeft}>
                   <View
@@ -258,7 +254,9 @@ function OverviewScreen({
             ))}
           </View>
         ) : (
-          <EmptyBlock title="这个月还没有账单记录" body="在记账页选择对应月份后保存。" />
+          <View style={styles.overviewBillEmpty}>
+            <EmptyBlock title="这个月还没有账单记录" body="在记账页选择对应月份后保存。" />
+          </View>
         )}
       </View>
     </ScrollView>
@@ -272,7 +270,6 @@ function TrendsScreen({
   rankingCategories,
   selectedRankingCategory,
   onSelectRankingCategory,
-  onDataImported,
 }: {
   selectedMonth: string;
   onMonthChange: (monthKey: string) => void;
@@ -280,7 +277,6 @@ function TrendsScreen({
   rankingCategories: string[];
   selectedRankingCategory: string | null;
   onSelectRankingCategory: (category: string) => void;
-  onDataImported: () => Promise<void>;
 }) {
   return (
     <ScrollView
@@ -289,8 +285,7 @@ function TrendsScreen({
       showsVerticalScrollIndicator={false}>
       <View style={styles.section}>
         <Text style={styles.sectionEyebrow}>Trend Room</Text>
-        <Text style={styles.pageTitle}>预算趋势</Text>
-        <Text style={styles.pageBody}>把每个月的支出、预算线和超支情况放在同一个视角里看。</Text>
+        <Text style={styles.pageTitle}>消费趋势</Text>
       </View>
 
       <View style={styles.section}>
@@ -318,11 +313,12 @@ function TrendsScreen({
       </View>
 
       <View style={styles.section}>
-        <MonthlyLineChart data={summary.monthlyTrend} budgetLimit={MONTHLY_BUDGET_LIMIT} />
-      </View>
-
-      <View style={styles.section}>
-        <MonthlyBarChart data={summary.monthlyTrend} budgetLimit={MONTHLY_BUDGET_LIMIT} />
+        <MonthlyLineChart
+          data={summary.monthlyTrend}
+          budgetLimit={MONTHLY_BUDGET_LIMIT}
+          selectedMonth={selectedMonth}
+          onChangeMonth={onMonthChange}
+        />
       </View>
 
       <OverspendRankingList rows={summary.overspendRanking} />
@@ -335,10 +331,6 @@ function TrendsScreen({
         rankingMap={summary.categoryMonthRanking}
         onSelectCategory={onSelectRankingCategory}
       />
-
-      <View style={styles.section}>
-        <BackupActions onImported={onDataImported} />
-      </View>
     </ScrollView>
   );
 }
@@ -404,11 +396,11 @@ function StatBlock({ label, value }: { label: string; value: string }) {
   );
 }
 
-function SectionHeader({ title, body }: { title: string; body: string }) {
+function SectionHeader({ title, body }: { title: string; body?: string }) {
   return (
     <View style={styles.sectionHeader}>
       <Text style={styles.sectionTitle}>{title}</Text>
-      <Text style={styles.sectionBody}>{body}</Text>
+      {body ? <Text style={styles.sectionBody}>{body}</Text> : null}
     </View>
   );
 }
@@ -446,6 +438,10 @@ const styles = StyleSheet.create({
     paddingBottom: 140,
     gap: 18,
   },
+  overviewContent: {
+    flexGrow: 1,
+    paddingBottom: 116,
+  },
   heroPanel: {
     borderRadius: 34,
     paddingHorizontal: 22,
@@ -471,12 +467,6 @@ const styles = StyleSheet.create({
     fontFamily: 'SpaceGrotesk_700Bold',
     fontWeight: '700',
     color: '#FFF7EF',
-  },
-  heroCaption: {
-    fontSize: 14,
-    lineHeight: 21,
-    fontFamily: 'SpaceGrotesk_400Regular',
-    color: '#E6D7C8',
   },
   metricGrid: {
     flexDirection: 'row',
@@ -508,6 +498,21 @@ const styles = StyleSheet.create({
   },
   section: {
     gap: 14,
+  },
+  overviewBillSection: {
+    flexGrow: 1,
+    borderRadius: 28,
+    borderWidth: 1,
+    borderColor: '#E4D5C8',
+    backgroundColor: '#FBF7F1',
+    paddingHorizontal: 18,
+    paddingVertical: 18,
+    gap: 14,
+    minHeight: 260,
+  },
+  overviewBillEmpty: {
+    flexGrow: 1,
+    justifyContent: 'center',
   },
   sectionEyebrow: {
     fontSize: 12,
