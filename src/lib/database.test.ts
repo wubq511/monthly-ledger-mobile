@@ -45,6 +45,7 @@ interface DatabaseApi {
   getAllCategories: (db: never) => Promise<CategoryRecordLike[]>;
   renameCategory: (db: never, id: string, name: string) => Promise<void>;
   deleteCategory: (db: never, id: string) => Promise<void>;
+  renameSubcategory: (db: never, id: string, name: string) => Promise<void>;
 }
 
 function requireDatabaseApi<K extends keyof DatabaseApi>(key: K): DatabaseApi[K] {
@@ -200,6 +201,31 @@ class FakeDatabase {
 
     if (normalized.startsWith('DELETE FROM SUBCATEGORIES WHERE CATEGORY_ID = ?')) {
       this.subcategories = this.subcategories.filter((row) => row.categoryId !== params[0]);
+      return;
+    }
+
+    if (normalized.startsWith('UPDATE SUBCATEGORIES SET NAME = ?, UPDATED_AT = ? WHERE ID = ?')) {
+      this.subcategories = this.subcategories.map((row) =>
+        row.id === params[2]
+          ? {
+              ...row,
+              name: params[0] as string,
+              updatedAt: params[1] as string,
+            }
+          : row
+      );
+      return;
+    }
+
+    if (normalized.startsWith('UPDATE EXPENSES SET SUBCATEGORY = ? WHERE CATEGORY = ? AND SUBCATEGORY = ?')) {
+      this.rows = this.rows.map((row) =>
+        row.category === params[1] && row.subcategory === params[2]
+          ? {
+              ...row,
+              subcategory: (params[0] as string | null) ?? null,
+            }
+          : row
+      );
       return;
     }
 
@@ -359,5 +385,36 @@ describe('database category persistence', () => {
     expect(expenses).toHaveLength(1);
     expect(expenses[0]?.category).toBe(category!.name);
     expect(categories.find((item) => item.id === category!.id)).toBeUndefined();
+  });
+
+  it('renames a subcategory and updates historical expense rows', async () => {
+    const db = new FakeDatabase([]);
+    const initializeDatabase = requireDatabaseApi('initializeDatabase');
+    const getAllCategories = requireDatabaseApi('getAllCategories');
+    const insertExpense = requireDatabaseApi('insertExpense');
+    const renameSubcategory = requireDatabaseApi('renameSubcategory');
+    const getAllExpenses = requireDatabaseApi('getAllExpenses');
+
+    await initializeDatabase(db as never);
+    const category = (await getAllCategories(db as never)).find((item) => item.subcategories.length > 0);
+
+    expect(category).toBeDefined();
+    const subcategory = category?.subcategories[0];
+    expect(subcategory).toBeDefined();
+
+    await insertExpense(db as never, {
+      monthKey: '2026-04',
+      amount: 18,
+      category: category!.name,
+      subcategory: subcategory!.name,
+      note: null,
+    });
+
+    await renameSubcategory(db as never, subcategory!.id, '夜宵');
+    const expenses = await getAllExpenses(db as never);
+    const categories = await getAllCategories(db as never);
+
+    expect(expenses[0]?.subcategory).toBe('夜宵');
+    expect(categories[0]?.subcategories[0]?.name).toBe('夜宵');
   });
 });

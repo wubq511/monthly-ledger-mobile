@@ -65,3 +65,11 @@ export interface CategoryUsageSummary {
   categoryName: string;
   expenseCount: number;
 }
+
+export interface SubcategoryUsageSummary {
+  subcategoryId: string;
+  categoryId: string;
+  categoryName: string;
+  subcategoryName: string;
+  expenseCount: number;
+}

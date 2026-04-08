@@ -107,7 +107,10 @@ export function ExpenseForm({ onSubmit, onCompleteSequence, onImported }: Expens
         note: note.trim() || null,
       });
 
-      const nextStep = getNextCategoryStep(category);
+      const nextStep = getNextCategoryStep(
+        CATEGORY_DEFINITIONS.map((item) => item.name),
+        category
+      );
       setAmount('');
       setNote('');
 

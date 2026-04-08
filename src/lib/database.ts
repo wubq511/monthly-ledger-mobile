@@ -8,6 +8,7 @@ import type {
   ExpenseDraft,
   ExpenseEntry,
   ImportExpensesResult,
+  SubcategoryUsageSummary,
   SubcategoryRecord,
 } from '../types/ledger';
 
@@ -289,6 +290,78 @@ export async function getCategoryUsageSummary(db: SQLiteDatabase, id: string): P
     categoryId: category.id,
     categoryName: category.name,
     expenseCount: expenses.filter((entry) => entry.category === category.name).length,
+  };
+}
+
+export async function createSubcategory(db: SQLiteDatabase, categoryId: string, name: string) {
+  const category = (await getAllCategories(db)).find((item) => item.id === categoryId);
+
+  if (!category) {
+    return;
+  }
+
+  const timestamp = new Date().toISOString();
+
+  await db.runAsync(
+    `INSERT INTO subcategories (id, category_id, name, sort_order, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [createId(), categoryId, name, category.subcategories.length, timestamp, timestamp]
+  );
+}
+
+export async function renameSubcategory(db: SQLiteDatabase, id: string, name: string) {
+  const categories = await getAllCategories(db);
+  const category = categories.find((item) => item.subcategories.some((subcategory) => subcategory.id === id));
+  const subcategory = category?.subcategories.find((item) => item.id === id);
+
+  if (!category || !subcategory) {
+    return;
+  }
+
+  const updatedAt = new Date().toISOString();
+
+  await db.withTransactionAsync(async () => {
+    await db.runAsync('UPDATE subcategories SET name = ?, updated_at = ? WHERE id = ?', [name, updatedAt, id]);
+    await db.runAsync('UPDATE expenses SET subcategory = ? WHERE category = ? AND subcategory = ?', [
+      name,
+      category.name,
+      subcategory.name,
+    ]);
+  });
+}
+
+export async function deleteSubcategory(db: SQLiteDatabase, id: string) {
+  await db.runAsync('DELETE FROM subcategories WHERE id = ?', [id]);
+}
+
+export async function getSubcategoryUsageSummary(
+  db: SQLiteDatabase,
+  id: string
+): Promise<SubcategoryUsageSummary> {
+  const categories = await getAllCategories(db);
+  const category = categories.find((item) => item.subcategories.some((subcategory) => subcategory.id === id));
+  const subcategory = category?.subcategories.find((item) => item.id === id);
+
+  if (!category || !subcategory) {
+    return {
+      subcategoryId: id,
+      categoryId: '',
+      categoryName: '',
+      subcategoryName: '',
+      expenseCount: 0,
+    };
+  }
+
+  const expenses = await getAllExpenses(db);
+
+  return {
+    subcategoryId: subcategory.id,
+    categoryId: category.id,
+    categoryName: category.name,
+    subcategoryName: subcategory.name,
+    expenseCount: expenses.filter(
+      (entry) => entry.category === category.name && entry.subcategory === subcategory.name
+    ).length,
   };
 }
 
