@@ -1,9 +1,120 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-import type { ExpenseDraft, ExpenseEntry, ImportExpensesResult } from '../types/ledger';
+import { CATEGORY_DEFINITIONS, getSeedColorByIndex } from '../constants/categories';
+import type {
+  CategoryRecord,
+  CategoryUsageSummary,
+  CreateCategoryInput,
+  ExpenseDraft,
+  ExpenseEntry,
+  ImportExpensesResult,
+  SubcategoryRecord,
+} from '../types/ledger';
 
 function createId() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+interface ExpenseRow {
+  id: string;
+  month_key: string;
+  amount: number;
+  category: string;
+  subcategory: string | null;
+  note: string | null;
+  created_at: string;
+}
+
+interface CategoryRow {
+  id: string;
+  name: string;
+  color: string;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+interface SubcategoryRow {
+  id: string;
+  category_id: string;
+  name: string;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+function mapExpenseRow(row: ExpenseRow): ExpenseEntry {
+  return {
+    id: row.id,
+    monthKey: row.month_key,
+    amount: row.amount,
+    category: row.category,
+    subcategory: row.subcategory,
+    note: row.note,
+    createdAt: row.created_at,
+  };
+}
+
+function mapSubcategoryRow(row: SubcategoryRow): SubcategoryRecord {
+  return {
+    id: row.id,
+    categoryId: row.category_id,
+    name: row.name,
+    sortOrder: row.sort_order,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapCategoryRow(row: CategoryRow, subcategories: SubcategoryRecord[]): CategoryRecord {
+  return {
+    id: row.id,
+    name: row.name,
+    color: row.color,
+    sortOrder: row.sort_order,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    subcategories,
+  };
+}
+
+async function getAllCategoryRows(db: SQLiteDatabase) {
+  return db.getAllAsync<CategoryRow>(
+    `SELECT id, name, color, sort_order, created_at, updated_at
+     FROM categories
+     ORDER BY sort_order ASC, created_at ASC`
+  );
+}
+
+async function getAllSubcategoryRows(db: SQLiteDatabase) {
+  return db.getAllAsync<SubcategoryRow>(
+    `SELECT id, category_id, name, sort_order, created_at, updated_at
+     FROM subcategories
+     ORDER BY sort_order ASC, created_at ASC`
+  );
+}
+
+async function seedDefaultCategories(db: SQLiteDatabase) {
+  await db.withTransactionAsync(async () => {
+    for (const [categoryIndex, definition] of CATEGORY_DEFINITIONS.entries()) {
+      const categoryId = createId();
+      const timestamp = new Date().toISOString();
+
+      await db.runAsync(
+        `INSERT INTO categories (id, name, color, sort_order, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [categoryId, definition.name, definition.color, categoryIndex, timestamp, timestamp]
+      );
+
+      for (const [subcategoryIndex, name] of definition.subcategories.entries()) {
+        await db.runAsync(
+          `INSERT INTO subcategories (id, category_id, name, sort_order, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [createId(), categoryId, name, subcategoryIndex, timestamp, timestamp]
+        );
+      }
+    }
+  });
 }
 
 export async function initializeDatabase(db: SQLiteDatabase) {
@@ -21,31 +132,35 @@ export async function initializeDatabase(db: SQLiteDatabase) {
       created_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS categories (
+      id TEXT PRIMARY KEY NOT NULL,
+      name TEXT NOT NULL UNIQUE,
+      color TEXT NOT NULL,
+      sort_order INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS subcategories (
+      id TEXT PRIMARY KEY NOT NULL,
+      category_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      sort_order INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_expenses_month_key ON expenses(month_key);
     CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(date);
+    CREATE INDEX IF NOT EXISTS idx_categories_sort_order ON categories(sort_order);
+    CREATE INDEX IF NOT EXISTS idx_subcategories_category_sort ON subcategories(category_id, sort_order);
   `);
-}
 
-interface ExpenseRow {
-  id: string;
-  month_key: string;
-  amount: number;
-  category: string;
-  subcategory: string | null;
-  note: string | null;
-  created_at: string;
-}
+  const categories = await getAllCategoryRows(db);
 
-function mapExpenseRow(row: ExpenseRow): ExpenseEntry {
-  return {
-    id: row.id,
-    monthKey: row.month_key,
-    amount: row.amount,
-    category: row.category,
-    subcategory: row.subcategory,
-    note: row.note,
-    createdAt: row.created_at,
-  };
+  if (categories.length === 0) {
+    await seedDefaultCategories(db);
+  }
 }
 
 export async function getAllExpenses(db: SQLiteDatabase) {
@@ -56,6 +171,20 @@ export async function getAllExpenses(db: SQLiteDatabase) {
   );
 
   return rows.map(mapExpenseRow);
+}
+
+export async function getAllCategories(db: SQLiteDatabase): Promise<CategoryRecord[]> {
+  const [categoryRows, subcategoryRows] = await Promise.all([getAllCategoryRows(db), getAllSubcategoryRows(db)]);
+  const subcategoriesByCategoryId = new Map<string, SubcategoryRecord[]>();
+
+  for (const row of subcategoryRows) {
+    const mapped = mapSubcategoryRow(row);
+    const bucket = subcategoriesByCategoryId.get(mapped.categoryId) ?? [];
+    bucket.push(mapped);
+    subcategoriesByCategoryId.set(mapped.categoryId, bucket);
+  }
+
+  return categoryRows.map((row) => mapCategoryRow(row, subcategoriesByCategoryId.get(row.id) ?? []));
 }
 
 export async function exportAllExpenses(db: SQLiteDatabase) {
@@ -89,6 +218,78 @@ export async function deleteExpenseById(db: SQLiteDatabase, id: string) {
 
 export async function clearAllExpenses(db: SQLiteDatabase) {
   await db.runAsync('DELETE FROM expenses');
+}
+
+export async function createCategory(db: SQLiteDatabase, input: CreateCategoryInput) {
+  const categories = await getAllCategories(db);
+  const timestamp = new Date().toISOString();
+  const color = input.color ?? getSeedColorByIndex(categories.length);
+
+  await db.runAsync(
+    `INSERT INTO categories (id, name, color, sort_order, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [createId(), input.name, color, categories.length, timestamp, timestamp]
+  );
+}
+
+export async function updateCategoryOrder(db: SQLiteDatabase, idsInOrder: string[]) {
+  await db.withTransactionAsync(async () => {
+    for (const [sortOrder, id] of idsInOrder.entries()) {
+      await db.runAsync('UPDATE categories SET sort_order = ?, updated_at = ? WHERE id = ?', [
+        sortOrder,
+        new Date().toISOString(),
+        id,
+      ]);
+    }
+  });
+}
+
+export async function renameCategory(db: SQLiteDatabase, id: string, name: string) {
+  const category = (await getAllCategories(db)).find((item) => item.id === id);
+
+  if (!category) {
+    return;
+  }
+
+  const updatedAt = new Date().toISOString();
+
+  await db.withTransactionAsync(async () => {
+    await db.runAsync('UPDATE categories SET name = ?, updated_at = ? WHERE id = ?', [name, updatedAt, id]);
+    await db.runAsync('UPDATE expenses SET category = ? WHERE category = ?', [name, category.name]);
+  });
+}
+
+export async function deleteCategory(db: SQLiteDatabase, id: string) {
+  const category = (await getAllCategories(db)).find((item) => item.id === id);
+
+  if (!category) {
+    return;
+  }
+
+  await db.withTransactionAsync(async () => {
+    await db.runAsync('DELETE FROM subcategories WHERE category_id = ?', [id]);
+    await db.runAsync('DELETE FROM categories WHERE id = ?', [id]);
+  });
+}
+
+export async function getCategoryUsageSummary(db: SQLiteDatabase, id: string): Promise<CategoryUsageSummary> {
+  const category = (await getAllCategories(db)).find((item) => item.id === id);
+
+  if (!category) {
+    return {
+      categoryId: id,
+      categoryName: '',
+      expenseCount: 0,
+    };
+  }
+
+  const expenses = await getAllExpenses(db);
+
+  return {
+    categoryId: category.id,
+    categoryName: category.name,
+    expenseCount: expenses.filter((entry) => entry.category === category.name).length,
+  };
 }
 
 export async function importExpensesMerge(

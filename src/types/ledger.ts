@@ -35,3 +35,33 @@ export interface CategoryDefinition {
   color: string;
   subcategories: string[];
 }
+
+export interface SubcategoryRecord {
+  id: string;
+  categoryId: string;
+  name: string;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CategoryRecord {
+  id: string;
+  name: string;
+  color: string;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+  subcategories: SubcategoryRecord[];
+}
+
+export interface CreateCategoryInput {
+  name: string;
+  color?: string;
+}
+
+export interface CategoryUsageSummary {
+  categoryId: string;
+  categoryName: string;
+  expenseCount: number;
+}

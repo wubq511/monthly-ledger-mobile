@@ -69,7 +69,13 @@ export const CATEGORY_DEFINITIONS: CategoryDefinition[] = [
 ];
 
 export const DEFAULT_CATEGORY = CATEGORY_DEFINITIONS[0];
+export const CATEGORY_COLOR_PALETTE = CATEGORY_DEFINITIONS.map((item) => item.color);
+export const FALLBACK_CATEGORY_COLOR = DEFAULT_CATEGORY.color;
 
 export function getCategoryDefinition(categoryName: string) {
   return CATEGORY_DEFINITIONS.find((item) => item.name === categoryName) ?? DEFAULT_CATEGORY;
+}
+
+export function getSeedColorByIndex(index: number) {
+  return CATEGORY_COLOR_PALETTE[index % CATEGORY_COLOR_PALETTE.length] ?? FALLBACK_CATEGORY_COLOR;
 }
