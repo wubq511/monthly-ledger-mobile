@@ -23,6 +23,7 @@ export interface LedgerBackupFile {
   appVersion: string;
   exportedAt: string;
   entries: ExpenseEntry[];
+  categories: CategoryRecord[];
 }
 
 export interface ImportExpensesResult {

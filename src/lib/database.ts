@@ -44,6 +44,13 @@ interface SubcategoryRow {
   updated_at: string;
 }
 
+export interface ImportCategoryDefinitionsResult {
+  importedCategoryCount: number;
+  importedSubcategoryCount: number;
+  skippedCategoryCount: number;
+  skippedSubcategoryCount: number;
+}
+
 function mapExpenseRow(row: ExpenseRow): ExpenseEntry {
   return {
     id: row.id,
@@ -118,6 +125,33 @@ async function seedDefaultCategories(db: SQLiteDatabase) {
   });
 }
 
+async function insertCategoryDefinition(
+  db: SQLiteDatabase,
+  category: CategoryRecord,
+  categoryId = category.id
+) {
+  await db.runAsync(
+    `INSERT INTO categories (id, name, color, sort_order, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [categoryId, category.name, category.color, category.sortOrder, category.createdAt, category.updatedAt]
+  );
+
+  for (const subcategory of category.subcategories) {
+    await db.runAsync(
+      `INSERT INTO subcategories (id, category_id, name, sort_order, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        subcategory.id,
+        categoryId,
+        subcategory.name,
+        subcategory.sortOrder,
+        subcategory.createdAt,
+        subcategory.updatedAt,
+      ]
+    );
+  }
+}
+
 export async function initializeDatabase(db: SQLiteDatabase) {
   await db.execAsync(`
     PRAGMA journal_mode = WAL;
@@ -190,6 +224,10 @@ export async function getAllCategories(db: SQLiteDatabase): Promise<CategoryReco
 
 export async function exportAllExpenses(db: SQLiteDatabase) {
   return getAllExpenses(db);
+}
+
+export async function exportAllCategories(db: SQLiteDatabase) {
+  return getAllCategories(db);
 }
 
 export async function insertExpense(db: SQLiteDatabase, draft: ExpenseDraft) {
@@ -363,6 +401,98 @@ export async function getSubcategoryUsageSummary(
       (entry) => entry.category === category.name && entry.subcategory === subcategory.name
     ).length,
   };
+}
+
+export async function replaceAllCategoryDefinitions(db: SQLiteDatabase, categories: CategoryRecord[]) {
+  await db.withTransactionAsync(async () => {
+    await db.runAsync('DELETE FROM subcategories');
+    await db.runAsync('DELETE FROM categories');
+
+    for (const category of categories) {
+      await insertCategoryDefinition(db, category);
+    }
+  });
+}
+
+export async function mergeCategoryDefinitions(
+  db: SQLiteDatabase,
+  importedCategories: CategoryRecord[]
+): Promise<ImportCategoryDefinitionsResult> {
+  let result: ImportCategoryDefinitionsResult = {
+    importedCategoryCount: 0,
+    importedSubcategoryCount: 0,
+    skippedCategoryCount: 0,
+    skippedSubcategoryCount: 0,
+  };
+
+  await db.withTransactionAsync(async () => {
+    let existingCategories = await getAllCategories(db);
+    const categoryByName = new Map(existingCategories.map((category) => [category.name, category]));
+
+    for (const importedCategory of importedCategories) {
+      let targetCategory = categoryByName.get(importedCategory.name);
+
+      if (!targetCategory) {
+        const createdCategory: CategoryRecord = {
+          ...importedCategory,
+          id: createId(),
+          sortOrder: existingCategories.length,
+          subcategories: [],
+        };
+
+        await insertCategoryDefinition(db, createdCategory);
+        result.importedCategoryCount += 1;
+        existingCategories = [...existingCategories, createdCategory];
+        targetCategory = createdCategory;
+        categoryByName.set(targetCategory.name, targetCategory);
+      } else {
+        result.skippedCategoryCount += 1;
+      }
+
+      const existingSubcategoryNames = new Set(targetCategory.subcategories.map((subcategory) => subcategory.name));
+      let nextSubcategoryOrder = targetCategory.subcategories.length;
+
+      for (const importedSubcategory of importedCategory.subcategories) {
+        if (existingSubcategoryNames.has(importedSubcategory.name)) {
+          result.skippedSubcategoryCount += 1;
+          continue;
+        }
+
+        const createdSubcategory: SubcategoryRecord = {
+          ...importedSubcategory,
+          id: createId(),
+          categoryId: targetCategory.id,
+          sortOrder: nextSubcategoryOrder,
+        };
+
+        await db.runAsync(
+          `INSERT INTO subcategories (id, category_id, name, sort_order, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [
+            createdSubcategory.id,
+            createdSubcategory.categoryId,
+            createdSubcategory.name,
+            createdSubcategory.sortOrder,
+            createdSubcategory.createdAt,
+            createdSubcategory.updatedAt,
+          ]
+        );
+
+        result.importedSubcategoryCount += 1;
+        existingSubcategoryNames.add(createdSubcategory.name);
+        nextSubcategoryOrder += 1;
+      }
+
+      existingCategories = await getAllCategories(db);
+      const refreshedTarget = existingCategories.find((category) => category.name === targetCategory.name);
+
+      if (refreshedTarget) {
+        categoryByName.set(refreshedTarget.name, refreshedTarget);
+      }
+    }
+  });
+
+  return result;
 }
 
 export async function importExpensesMerge(
