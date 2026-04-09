@@ -1,23 +1,49 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Keyboard,
+  type KeyboardEvent,
   Modal,
+  Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
+  TouchableOpacity,
+  useWindowDimensions,
   View,
 } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import {
+  NestableDraggableFlatList,
+  NestableScrollContainer,
+  ShadowDecorator,
+  useOnCellActiveAnimation,
+  type RenderItemParams,
+} from 'react-native-draggable-flatlist';
+import Animated, { interpolate, useAnimatedStyle } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { moveCategoryBeforeTarget } from '../lib/categoryReorder';
+import {
+  buildManagedCategoryCards,
+  resolveManagedExpandedCategoryId,
+  toggleManagedExpandedCategoryId,
+  type ManagedCategoryCard,
+} from '../lib/categoryManagerSelection';
+import { getCategoryManagerDragFeedback } from '../lib/categoryManagerDragFeedback';
+import { getCategoryManagerLayoutMetrics } from '../lib/categoryManagerLayout';
+import { getExperimentalLayoutAnimationFlag } from '../lib/draggableListConfig';
+import { getKeyboardInset } from '../lib/expenseFormLayout';
+import { reorderCategoriesTree, reorderSubcategoriesTree } from '../lib/categoryReorder';
 import type {
   CategoryRecord,
   CategoryUsageSummary,
   SubcategoryUsageSummary,
 } from '../types/ledger';
+
+type ManagedSubcategory = CategoryRecord['subcategories'][number];
+type DragKind = 'category' | 'subcategory';
 
 type EditorState =
   | { mode: 'create-category'; title: string; confirmLabel: string; initialValue: string }
@@ -53,6 +79,7 @@ interface CategoryManagerModalProps {
   onRenameCategory: (id: string, name: string) => Promise<void>;
   onDeleteCategory: (id: string) => Promise<void>;
   onReorderCategories: (idsInOrder: string[]) => Promise<void>;
+  onReorderSubcategories: (categoryId: string, idsInOrder: string[]) => Promise<void>;
   onCreateSubcategory: (categoryId: string, name: string) => Promise<void>;
   onRenameSubcategory: (id: string, name: string) => Promise<void>;
   onDeleteSubcategory: (id: string) => Promise<void>;
@@ -73,6 +100,7 @@ export function CategoryManagerModal({
   onRenameCategory,
   onDeleteCategory,
   onReorderCategories,
+  onReorderSubcategories,
   onCreateSubcategory,
   onRenameSubcategory,
   onDeleteSubcategory,
@@ -80,33 +108,85 @@ export function CategoryManagerModal({
   getSubcategoryUsageSummary,
 }: CategoryManagerModalProps) {
   const insets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
+  const enableExperimentalLayoutAnimation = getExperimentalLayoutAnimationFlag(
+    globalThis as Parameters<typeof getExperimentalLayoutAnimationFlag>[0]
+  );
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [editorValue, setEditorValue] = useState('');
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
-  const [pickedCategoryId, setPickedCategoryId] = useState<string | null>(null);
-
-  const pickedCategory = useMemo(
-    () => categories.find((category) => category.id === pickedCategoryId) ?? null,
-    [categories, pickedCategoryId]
-  );
+  const [activeDragKind, setActiveDragKind] = useState<DragKind | null>(null);
+  const [keyboardInset, setKeyboardInset] = useState(0);
+  const [editorDockHeight, setEditorDockHeight] = useState(0);
+  const [localCategories, setLocalCategories] = useState<CategoryRecord[]>(categories);
+  const [expandedCategoryId, setExpandedCategoryId] = useState<string | null>(null);
+  const scrollContainerRef = useRef<any>(null);
+  const categoryDragFeedback = getCategoryManagerDragFeedback('category');
+  const subcategoryDragFeedback = getCategoryManagerDragFeedback('subcategory');
 
   useEffect(() => {
-    if (!visible) {
-      setEditor(null);
-      setEditorValue('');
-      setBusyLabel(null);
-      setPickedCategoryId(null);
-    }
-  }, [visible]);
-
-  const closeModal = () => {
-    if (busyLabel) {
+    if (visible) {
+      setLocalCategories(categories);
+      setExpandedCategoryId((currentCategoryId) =>
+        resolveManagedExpandedCategoryId(categories, currentCategoryId)
+      );
       return;
     }
 
     setEditor(null);
     setEditorValue('');
-    setPickedCategoryId(null);
+    setBusyLabel(null);
+    setActiveDragKind(null);
+    setLocalCategories(categories);
+    setExpandedCategoryId(null);
+    setKeyboardInset(0);
+    setEditorDockHeight(0);
+  }, [categories, visible]);
+
+  useEffect(() => {
+    setExpandedCategoryId((currentCategoryId) =>
+      resolveManagedExpandedCategoryId(localCategories, currentCategoryId)
+    );
+  }, [localCategories]);
+
+  useEffect(() => {
+    if (!visible) {
+      return;
+    }
+
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const handleShow = (event: KeyboardEvent) => {
+      setKeyboardInset(
+        getKeyboardInset(windowHeight, event.endCoordinates.screenY, event.endCoordinates.height)
+      );
+    };
+    const showSubscription = Keyboard.addListener(showEvent, handleShow);
+    const hideSubscription = Keyboard.addListener(hideEvent, () => {
+      setKeyboardInset(0);
+    });
+
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, [visible, windowHeight]);
+
+  const managedCategoryCards = buildManagedCategoryCards(localCategories, expandedCategoryId);
+  const layoutMetrics = getCategoryManagerLayoutMetrics({
+    safeAreaBottom: insets.bottom,
+    keyboardInset,
+    editorVisible: Boolean(editor),
+  });
+  const editorOverlayPadding = editor ? editorDockHeight + 20 : 0;
+
+  const closeModal = () => {
+    if (busyLabel || activeDragKind) {
+      return;
+    }
+
+    setEditor(null);
+    setEditorValue('');
     onClose();
   };
 
@@ -155,35 +235,62 @@ export function CategoryManagerModal({
     }
   };
 
-  const handleCategoryLongPress = (categoryId: string) => {
-    if (busyLabel) {
+  const handleCategoryDragEnd = async ({
+    from,
+    to,
+  }: {
+    data: CategoryRecord[];
+    from: number;
+    to: number;
+  }) => {
+    setActiveDragKind(null);
+
+    if (from === to) {
       return;
     }
 
-    setPickedCategoryId((current) => (current === categoryId ? null : categoryId));
-  };
-
-  const handleCategoryPress = async (targetCategoryId: string) => {
-    if (!pickedCategoryId || pickedCategoryId === targetCategoryId) {
-      if (pickedCategoryId === targetCategoryId) {
-        setPickedCategoryId(null);
-      }
-      return;
-    }
-
-    setBusyLabel('正在调整顺序...');
+    const previousCategories = localCategories;
+    const nextCategories = reorderCategoriesTree(previousCategories, from, to);
+    setLocalCategories(nextCategories);
+    setBusyLabel('正在更新大类顺序...');
 
     try {
-      await onReorderCategories(
-        moveCategoryBeforeTarget(
-          categories.map((category) => category.id),
-          pickedCategoryId,
-          targetCategoryId
-        )
-      );
-      setPickedCategoryId(null);
+      await onReorderCategories(nextCategories.map((item) => item.id));
     } catch (error) {
+      setLocalCategories(previousCategories);
       Alert.alert('调整失败', getErrorMessage(error, '分类顺序更新失败'));
+    } finally {
+      setBusyLabel(null);
+    }
+  };
+
+  const handleSubcategoryDragEnd = async (
+    categoryId: string,
+    from: number,
+    to: number
+  ) => {
+    setActiveDragKind(null);
+
+    if (from === to) {
+      return;
+    }
+
+    const previousCategories = localCategories;
+    const nextCategories = reorderSubcategoriesTree(previousCategories, categoryId, from, to);
+    const reorderedSubcategories =
+      nextCategories.find((category) => category.id === categoryId)?.subcategories ?? [];
+
+    setLocalCategories(nextCategories);
+    setBusyLabel('正在更新细分顺序...');
+
+    try {
+      await onReorderSubcategories(
+        categoryId,
+        reorderedSubcategories.map((subcategory) => subcategory.id)
+      );
+    } catch (error) {
+      setLocalCategories(previousCategories);
+      Alert.alert('调整失败', getErrorMessage(error, '细分顺序更新失败'));
     } finally {
       setBusyLabel(null);
     }
@@ -207,9 +314,6 @@ export function CategoryManagerModal({
 
             try {
               await onDeleteCategory(category.id);
-              if (pickedCategoryId === category.id) {
-                setPickedCategoryId(null);
-              }
             } catch (error) {
               Alert.alert('删除失败', getErrorMessage(error, '删除大类失败'));
             } finally {
@@ -221,10 +325,7 @@ export function CategoryManagerModal({
     ]);
   };
 
-  const handleDeleteSubcategory = async (
-    category: CategoryRecord,
-    subcategory: CategoryRecord['subcategories'][number]
-  ) => {
+  const handleDeleteSubcategory = async (category: CategoryRecord, subcategory: ManagedSubcategory) => {
     const usage = await getSubcategoryUsageSummary(subcategory.id);
     const body =
       usage.expenseCount > 0
@@ -253,20 +354,191 @@ export function CategoryManagerModal({
     ]);
   };
 
+  const renderSubcategoryItem =
+    (category: CategoryRecord) =>
+    ({ item, drag, isActive }: RenderItemParams<ManagedSubcategory>) =>
+      (
+        <LiftDecorator liftOffset={subcategoryDragFeedback.liftOffset}>
+          <ShadowDecorator
+            elevation={subcategoryDragFeedback.shadowElevation}
+            opacity={subcategoryDragFeedback.shadowOpacity}
+            radius={subcategoryDragFeedback.shadowRadius}>
+            <View style={[styles.subcategoryRow, isActive && styles.subcategoryRowActive]}>
+              <View style={styles.subcategoryContent}>
+                <TouchableOpacity
+                  onLongPress={drag}
+                  delayLongPress={180}
+                  activeOpacity={0.85}
+                  disabled={Boolean(busyLabel) || Boolean(editor) || isActive}
+                  style={styles.dragHandleTouchArea}>
+                  <Text style={styles.subcategoryHandle}>⋮⋮</Text>
+                </TouchableOpacity>
+                <Text style={styles.subcategoryName}>{item.name}</Text>
+              </View>
+              <View style={styles.subcategoryActions}>
+                <ActionChip
+                  label="改名"
+                  compact
+                  onPress={() =>
+                    openEditor({
+                      mode: 'rename-subcategory',
+                      title: '修改细分名称',
+                      confirmLabel: '正在修改细分...',
+                      initialValue: item.name,
+                      categoryId: category.id,
+                      subcategoryId: item.id,
+                    })
+                  }
+                />
+                <ActionChip
+                  label="删除"
+                  tone="danger"
+                  compact
+                  onPress={() => void handleDeleteSubcategory(category, item)}
+                />
+              </View>
+            </View>
+          </ShadowDecorator>
+        </LiftDecorator>
+      );
+
+  const renderCategoryItem = ({ item, drag, isActive }: RenderItemParams<ManagedCategoryCard>) => {
+    const canToggleSubcategories = item.subcategories.length > 0;
+
+    return (
+      <LiftDecorator liftOffset={categoryDragFeedback.liftOffset}>
+        <ShadowDecorator
+          elevation={categoryDragFeedback.shadowElevation}
+          opacity={categoryDragFeedback.shadowOpacity}
+          radius={categoryDragFeedback.shadowRadius}>
+          <View
+            style={[
+              styles.categoryCard,
+              item.isExpanded && styles.categoryCardExpanded,
+              isActive && styles.categoryCardActive,
+            ]}>
+            <View style={styles.categoryHeader}>
+              <View style={styles.categoryTitleGroup}>
+                <TouchableOpacity
+                  onLongPress={drag}
+                  delayLongPress={180}
+                  activeOpacity={0.85}
+                  disabled={Boolean(busyLabel) || Boolean(editor) || isActive}
+                  style={styles.dragHandleTouchArea}>
+                  <Text style={styles.categoryHandle}>⋮⋮</Text>
+                </TouchableOpacity>
+
+                <View style={styles.categoryLabelGroup}>
+                  <Text style={styles.categoryTitle}>{item.name}</Text>
+                  <Text style={styles.categoryMeta}>
+                    {item.subcategories.length > 0 ? `${item.subcategories.length} 个细分` : '暂无细分'}
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.categoryActions}>
+                {canToggleSubcategories ? (
+                  <ActionChip
+                    label={item.isExpanded ? '收起细分' : '展开细分'}
+                    onPress={() =>
+                      setExpandedCategoryId((currentCategoryId) =>
+                        toggleManagedExpandedCategoryId(currentCategoryId, item.id)
+                      )
+                    }
+                  />
+                ) : null}
+                <ActionChip
+                  label="新增细分"
+                  onPress={() => {
+                    setExpandedCategoryId(item.id);
+                    openEditor({
+                      mode: 'create-subcategory',
+                      title: `给“${item.name}”新增细分`,
+                      confirmLabel: '正在新增细分...',
+                      initialValue: '',
+                      categoryId: item.id,
+                    });
+                  }}
+                />
+                <ActionChip
+                  label="改名"
+                  onPress={() =>
+                    openEditor({
+                      mode: 'rename-category',
+                      title: '修改大类名称',
+                      confirmLabel: '正在修改大类...',
+                      initialValue: item.name,
+                      categoryId: item.id,
+                    })
+                  }
+                />
+                <ActionChip label="删除" tone="danger" onPress={() => void handleDeleteCategory(item)} />
+              </View>
+            </View>
+
+            {item.isExpanded ? (
+              <View style={styles.subcategorySection}>
+                <View style={styles.subcategorySectionHeader}>
+                  <Text style={styles.subcategorySectionEyebrow}>Subcategories</Text>
+                  <Text style={styles.subcategorySectionTitle}>{item.name} 的细分</Text>
+                  <Text style={styles.subcategorySectionBody}>
+                    长按手柄即可拖动，顺序会立刻保存。
+                  </Text>
+                </View>
+
+                {item.visibleSubcategories.length > 0 ? (
+                  <NestableDraggableFlatList
+                    data={item.visibleSubcategories}
+                    keyExtractor={(subcategory) => subcategory.id}
+                    renderItem={renderSubcategoryItem(item)}
+                    onDragBegin={() => setActiveDragKind('subcategory')}
+                    onRelease={() => setActiveDragKind(null)}
+                    onDragEnd={({ from, to }) => {
+                      void handleSubcategoryDragEnd(item.id, from, to);
+                    }}
+                    dragItemOverflow
+                    activationDistance={20}
+                    autoscrollThreshold={32}
+                    autoscrollSpeed={120}
+                    enableLayoutAnimationExperimental={enableExperimentalLayoutAnimation}
+                    contentContainerStyle={styles.subcategoryList}
+                    showsVerticalScrollIndicator={false}
+                    scrollEnabled={false}
+                    simultaneousHandlers={scrollContainerRef}
+                  />
+                ) : (
+                  <Text style={styles.subcategoryEmpty}>先给这个大类补一个常用细分。</Text>
+                )}
+              </View>
+            ) : null}
+          </View>
+        </ShadowDecorator>
+      </LiftDecorator>
+    );
+  };
+
+  const dragHelperText =
+    activeDragKind === 'category'
+      ? '正在拖动大类，松手后会立即保存顺序。'
+      : activeDragKind === 'subcategory'
+        ? '正在拖动细分，列表会实时交换位置。'
+        : '长按手柄拖动即可调整顺序。';
+
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={closeModal}>
-      <View style={styles.root}>
-        <Pressable style={styles.backdrop} onPress={closeModal} />
+      <GestureHandlerRootView style={styles.gestureRoot}>
+        <View style={styles.root}>
+          <Pressable style={styles.backdrop} onPress={closeModal} />
 
-        <View
-          style={[
-            styles.wrap,
-            {
-              paddingTop: Math.max(insets.top, 18) + 12,
-              paddingBottom: Math.max(insets.bottom, 18) + 16,
-            },
-          ]}>
-          <View style={styles.card}>
+          <View
+            style={[
+              styles.wrap,
+              {
+                paddingTop: Math.max(insets.top, 18) + 12,
+                paddingBottom: layoutMetrics.modalBottomInset,
+              },
+            ]}>
+            <View style={styles.card}>
             <View style={styles.header}>
               <View style={styles.headerTextGroup}>
                 <Text style={styles.eyebrow}>Category Studio</Text>
@@ -292,15 +564,7 @@ export function CategoryManagerModal({
                 <Text style={styles.primaryActionText}>新增大类</Text>
               </Pressable>
 
-              {pickedCategory ? (
-                <View style={styles.pickHint}>
-                  <Text style={styles.pickHintText}>
-                    已选中“{pickedCategory.name}”，点击另一个大类可把它放到该项前面。
-                  </Text>
-                </View>
-              ) : (
-                <Text style={styles.helperText}>长按大类可调整顺序。</Text>
-              )}
+              <Text style={styles.helperText}>{dragHelperText}</Text>
             </View>
 
             {busyLabel ? (
@@ -310,121 +574,60 @@ export function CategoryManagerModal({
               </View>
             ) : null}
 
-            <ScrollView
-              style={styles.scroll}
-              contentContainerStyle={styles.scrollContent}
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator={false}>
-              {categories.map((category) => {
-                const selectedForReorder = category.id === pickedCategoryId;
-                const canReceiveDrop = Boolean(pickedCategoryId) && !selectedForReorder;
-
-                return (
-                  <Pressable
-                    key={category.id}
-                    onLongPress={() => handleCategoryLongPress(category.id)}
-                    delayLongPress={220}
-                    onPress={() => {
-                      void handleCategoryPress(category.id);
-                    }}
-                    style={[
-                      styles.categoryCard,
-                      selectedForReorder && styles.categoryCardPicked,
-                      canReceiveDrop && styles.categoryCardDropTarget,
-                    ]}>
-                    <View style={styles.categoryHeader}>
-                      <View style={styles.categoryTitleGroup}>
-                        <Text style={styles.categoryHandle}>⋮⋮</Text>
-                        <View style={styles.categoryLabelGroup}>
-                          <Text style={styles.categoryTitle}>{category.name}</Text>
-                          <Text style={styles.categoryMeta}>
-                            {category.subcategories.length > 0
-                              ? `${category.subcategories.length} 个细分`
-                              : '暂无细分'}
-                          </Text>
-                        </View>
-                      </View>
-
-                      <View style={styles.categoryActions}>
-                        <ActionChip
-                          label="新增细分"
-                          onPress={() =>
-                            openEditor({
-                              mode: 'create-subcategory',
-                              title: `给“${category.name}”新增细分`,
-                              confirmLabel: '正在新增细分...',
-                              initialValue: '',
-                              categoryId: category.id,
-                            })
-                          }
-                        />
-                        <ActionChip
-                          label="改名"
-                          onPress={() =>
-                            openEditor({
-                              mode: 'rename-category',
-                              title: '修改大类名称',
-                              confirmLabel: '正在修改大类...',
-                              initialValue: category.name,
-                              categoryId: category.id,
-                            })
-                          }
-                        />
-                        <ActionChip label="删除" tone="danger" onPress={() => void handleDeleteCategory(category)} />
-                      </View>
-                    </View>
-
-                    {canReceiveDrop ? (
-                      <Text style={styles.dropHint}>点击这里，把“{pickedCategory?.name}”放到此项前面</Text>
-                    ) : null}
-
-                    <View style={styles.subcategoryList}>
-                      {category.subcategories.length > 0 ? (
-                        category.subcategories.map((subcategory) => (
-                          <View key={subcategory.id} style={styles.subcategoryRow}>
-                            <Text style={styles.subcategoryName}>{subcategory.name}</Text>
-                            <View style={styles.subcategoryActions}>
-                              <ActionChip
-                                label="改名"
-                                compact
-                                onPress={() =>
-                                  openEditor({
-                                    mode: 'rename-subcategory',
-                                    title: '修改细分名称',
-                                    confirmLabel: '正在修改细分...',
-                                    initialValue: subcategory.name,
-                                    categoryId: category.id,
-                                    subcategoryId: subcategory.id,
-                                  })
-                                }
-                              />
-                              <ActionChip
-                                label="删除"
-                                tone="danger"
-                                compact
-                                onPress={() => void handleDeleteSubcategory(category, subcategory)}
-                              />
-                            </View>
-                          </View>
-                        ))
-                      ) : (
-                        <Text style={styles.subcategoryEmpty}>先给这个大类补一个常用细分。</Text>
-                      )}
-                    </View>
-                  </Pressable>
-                );
-              })}
-
-              {!loading && categories.length === 0 ? (
+            {localCategories.length > 0 ? (
+              <NestableScrollContainer
+                ref={scrollContainerRef}
+                style={styles.scroll}
+                contentContainerStyle={[
+                  styles.scrollContainerContent,
+                  editor ? { paddingBottom: 22 + editorOverlayPadding } : null,
+                ]}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}>
+                <NestableDraggableFlatList
+                  data={managedCategoryCards}
+                  keyExtractor={(category) => category.id}
+                  renderItem={renderCategoryItem}
+                  onDragBegin={() => setActiveDragKind('category')}
+                  onRelease={() => setActiveDragKind(null)}
+                  onDragEnd={({ from, to }) => {
+                    void handleCategoryDragEnd({ from, to, data: localCategories });
+                  }}
+                  dragItemOverflow
+                  activationDistance={20}
+                  autoscrollThreshold={48}
+                  autoscrollSpeed={160}
+                  enableLayoutAnimationExperimental={enableExperimentalLayoutAnimation}
+                  keyboardShouldPersistTaps="handled"
+                  showsVerticalScrollIndicator={false}
+                  contentContainerStyle={styles.scrollContent}
+                  simultaneousHandlers={scrollContainerRef}
+                />
+              </NestableScrollContainer>
+            ) : !loading ? (
+              <View style={[styles.emptyWrap, editor ? { paddingBottom: editorOverlayPadding } : null]}>
                 <View style={styles.emptyCard}>
                   <Text style={styles.emptyTitle}>还没有可用分类</Text>
                   <Text style={styles.emptyBody}>先新增一个大类，记账页就会立刻出现这个选项。</Text>
                 </View>
-              ) : null}
-            </ScrollView>
+              </View>
+            ) : null}
 
-            {editor ? (
-              <View style={styles.editorSheet}>
+            </View>
+          </View>
+
+          {editor ? (
+            <View
+              style={[styles.editorDock, { bottom: layoutMetrics.editorBottomOffset }]}
+              pointerEvents="box-none">
+              <View
+                style={styles.editorSheetFloating}
+                onLayout={(event) => {
+                  const nextHeight = Math.ceil(event.nativeEvent.layout.height);
+                  if (nextHeight !== editorDockHeight) {
+                    setEditorDockHeight(nextHeight);
+                  }
+                }}>
                 <Text style={styles.editorTitle}>{editor.title}</Text>
                 <TextInput
                   value={editorValue}
@@ -443,12 +646,31 @@ export function CategoryManagerModal({
                   </Pressable>
                 </View>
               </View>
-            ) : null}
-          </View>
+            </View>
+          ) : null}
         </View>
-      </View>
+      </GestureHandlerRootView>
     </Modal>
   );
+}
+
+function LiftDecorator({
+  liftOffset,
+  children,
+}: {
+  liftOffset: number;
+  children: ReactNode;
+}) {
+  const { onActiveAnim } = useOnCellActiveAnimation();
+  const style = useAnimatedStyle(() => ({
+    transform: [
+      {
+        translateY: interpolate(onActiveAnim.value, [0, 1], [0, -liftOffset]),
+      },
+    ],
+  }));
+
+  return <Animated.View style={style}>{children}</Animated.View>;
 }
 
 function ActionChip({
@@ -483,6 +705,9 @@ function ActionChip({
 }
 
 const styles = StyleSheet.create({
+  gestureRoot: {
+    flex: 1,
+  },
   root: {
     flex: 1,
   },
@@ -563,20 +788,6 @@ const styles = StyleSheet.create({
     fontFamily: 'SpaceGrotesk_400Regular',
     color: '#806D62',
   },
-  pickHint: {
-    borderRadius: 16,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    backgroundColor: '#F4E8DC',
-    borderWidth: 1,
-    borderColor: '#E2CCBA',
-  },
-  pickHintText: {
-    fontSize: 13,
-    lineHeight: 18,
-    fontFamily: 'SpaceGrotesk_500Medium',
-    color: '#6D5448',
-  },
   statusRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -593,10 +804,17 @@ const styles = StyleSheet.create({
     flex: 1,
     marginTop: 12,
   },
-  scrollContent: {
+  scrollContainerContent: {
     paddingHorizontal: 18,
     paddingBottom: 22,
-    gap: 12,
+  },
+  scrollContent: {
+    gap: 0,
+  },
+  emptyWrap: {
+    flex: 1,
+    paddingHorizontal: 18,
+    paddingTop: 12,
   },
   categoryCard: {
     borderRadius: 24,
@@ -606,14 +824,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 14,
     gap: 12,
+    marginBottom: 12,
   },
-  categoryCardPicked: {
+  categoryCardExpanded: {
+    borderColor: '#CBA78E',
+    backgroundColor: '#FFF8F1',
+  },
+  categoryCardActive: {
     borderColor: '#C76439',
     backgroundColor: '#FFF5EE',
-  },
-  categoryCardDropTarget: {
-    borderStyle: 'dashed',
-    borderColor: '#CBA78E',
   },
   categoryHeader: {
     gap: 12,
@@ -622,6 +841,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
+    flex: 1,
+  },
+  dragHandleTouchArea: {
+    width: 28,
+    minHeight: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   categoryHandle: {
     fontSize: 18,
@@ -648,14 +874,42 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 8,
   },
-  dropHint: {
-    fontSize: 12,
-    lineHeight: 17,
-    fontFamily: 'SpaceGrotesk_500Medium',
-    color: '#9A5E3E',
-  },
   subcategoryList: {
     gap: 8,
+  },
+  subcategorySection: {
+    marginTop: 4,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: '#E4D5C8',
+    backgroundColor: '#FFFDFC',
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+  },
+  subcategorySectionHeader: {
+    gap: 4,
+    marginBottom: 12,
+  },
+  subcategorySectionEyebrow: {
+    fontSize: 11,
+    fontFamily: 'SpaceGrotesk_700Bold',
+    fontWeight: '700',
+    letterSpacing: 1.1,
+    textTransform: 'uppercase',
+    color: '#9A5E3E',
+  },
+  subcategorySectionTitle: {
+    fontSize: 18,
+    lineHeight: 22,
+    fontFamily: 'SpaceGrotesk_700Bold',
+    fontWeight: '700',
+    color: '#231B16',
+  },
+  subcategorySectionBody: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontFamily: 'SpaceGrotesk_400Regular',
+    color: '#806D62',
   },
   subcategoryRow: {
     flexDirection: 'row',
@@ -666,6 +920,22 @@ const styles = StyleSheet.create({
     backgroundColor: '#F7EFE6',
     paddingHorizontal: 12,
     paddingVertical: 10,
+    marginBottom: 8,
+  },
+  subcategoryRowActive: {
+    borderWidth: 1,
+    borderColor: '#C76439',
+    backgroundColor: '#FFF5EE',
+  },
+  subcategoryContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flex: 1,
+  },
+  subcategoryHandle: {
+    fontSize: 16,
+    color: '#A78876',
   },
   subcategoryName: {
     flex: 1,
@@ -730,6 +1000,26 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     fontFamily: 'SpaceGrotesk_400Regular',
     color: '#7E6C61',
+  },
+  editorDock: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+  },
+  editorSheetFloating: {
+    borderRadius: 28,
+    borderWidth: 1,
+    borderColor: '#E5D5C6',
+    backgroundColor: '#FFFDFC',
+    paddingHorizontal: 18,
+    paddingTop: 16,
+    paddingBottom: 18,
+    gap: 12,
+    shadowColor: '#20130D',
+    shadowOpacity: 0.14,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 5,
   },
   editorSheet: {
     borderTopWidth: 1,

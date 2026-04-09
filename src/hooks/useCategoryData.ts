@@ -12,6 +12,7 @@ import {
   renameCategory as renameCategoryRecord,
   renameSubcategory as renameSubcategoryRecord,
   updateCategoryOrder,
+  updateSubcategoryOrder,
 } from '../lib/database';
 import type { CategoryRecord } from '../types/ledger';
 
@@ -68,6 +69,9 @@ export function useCategoryData() {
     },
     reorderCategories: async (idsInOrder: string[]) => {
       await runMutation(() => updateCategoryOrder(db, idsInOrder));
+    },
+    reorderSubcategories: async (categoryId: string, idsInOrder: string[]) => {
+      await runMutation(() => updateSubcategoryOrder(db, categoryId, idsInOrder));
     },
     createSubcategory: async (categoryId: string, name: string) => {
       await runMutation(() => createSubcategoryRecord(db, categoryId, name));

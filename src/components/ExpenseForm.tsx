@@ -42,6 +42,7 @@ interface ExpenseFormProps {
   onRenameCategory: (id: string, name: string) => Promise<void>;
   onDeleteCategory: (id: string) => Promise<void>;
   onReorderCategories: (idsInOrder: string[]) => Promise<void>;
+  onReorderSubcategories: (categoryId: string, idsInOrder: string[]) => Promise<void>;
   onCreateSubcategory: (categoryId: string, name: string) => Promise<void>;
   onRenameSubcategory: (id: string, name: string) => Promise<void>;
   onDeleteSubcategory: (id: string) => Promise<void>;
@@ -59,6 +60,7 @@ export function ExpenseForm({
   onRenameCategory,
   onDeleteCategory,
   onReorderCategories,
+  onReorderSubcategories,
   onCreateSubcategory,
   onRenameSubcategory,
   onDeleteSubcategory,
@@ -185,8 +187,9 @@ export function ExpenseForm({
       });
 
       const nextStep = getNextCategoryStep(
-        categories.map((item) => item.name),
-        category
+        categories,
+        category,
+        subcategory || null
       );
       setAmount('');
       setNote('');
@@ -198,7 +201,8 @@ export function ExpenseForm({
       }
 
       if (nextStep.nextCategory) {
-        handleSelectCategory(nextStep.nextCategory);
+        setCategory(nextStep.nextCategory);
+        setSubcategory(nextStep.nextSubcategory ?? '');
       }
 
       amountInputRef.current?.focus();
@@ -371,6 +375,7 @@ export function ExpenseForm({
         onRenameCategory={onRenameCategory}
         onDeleteCategory={onDeleteCategory}
         onReorderCategories={onReorderCategories}
+        onReorderSubcategories={onReorderSubcategories}
         onCreateSubcategory={onCreateSubcategory}
         onRenameSubcategory={onRenameSubcategory}
         onDeleteSubcategory={onDeleteSubcategory}

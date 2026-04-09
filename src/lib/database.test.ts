@@ -47,6 +47,7 @@ interface DatabaseApi {
   deleteCategory: (db: never, id: string) => Promise<void>;
   renameSubcategory: (db: never, id: string, name: string) => Promise<void>;
   updateCategoryOrder: (db: never, idsInOrder: string[]) => Promise<void>;
+  updateSubcategoryOrder: (db: never, categoryId: string, idsInOrder: string[]) => Promise<void>;
 }
 
 function requireDatabaseApi<K extends keyof DatabaseApi>(key: K): DatabaseApi[K] {
@@ -224,6 +225,23 @@ class FakeDatabase {
           ? {
               ...row,
               name: params[0] as string,
+              updatedAt: params[1] as string,
+            }
+          : row
+      );
+      return;
+    }
+
+    if (
+      normalized.startsWith(
+        'UPDATE SUBCATEGORIES SET SORT_ORDER = ?, UPDATED_AT = ? WHERE ID = ? AND CATEGORY_ID = ?'
+      )
+    ) {
+      this.subcategories = this.subcategories.map((row) =>
+        row.id === params[2] && row.categoryId === params[3]
+          ? {
+              ...row,
+              sortOrder: params[0] as number,
               updatedAt: params[1] as string,
             }
           : row
@@ -449,6 +467,35 @@ describe('database category persistence', () => {
     const reordered = await getAllCategories(db as never);
 
     expect(reordered.slice(0, 3).map((item) => item.id)).toEqual([
+      reorderedIds[2],
+      reorderedIds[0],
+      reorderedIds[1],
+    ]);
+  });
+
+  it('persists subcategory order changes for subsequent reads', async () => {
+    const db = new FakeDatabase([]);
+    const initializeDatabase = requireDatabaseApi('initializeDatabase');
+    const getAllCategories = requireDatabaseApi('getAllCategories');
+    const updateSubcategoryOrder = requireDatabaseApi('updateSubcategoryOrder');
+
+    await initializeDatabase(db as never);
+    const category = (await getAllCategories(db as never)).find(
+      (item) => item.subcategories.length >= 3
+    );
+
+    expect(category).toBeDefined();
+    const reorderedIds = category!.subcategories.slice(0, 3).map((item) => item.id);
+
+    await updateSubcategoryOrder(db as never, category!.id, [
+      reorderedIds[2]!,
+      reorderedIds[0]!,
+      reorderedIds[1]!,
+    ]);
+
+    const refreshed = (await getAllCategories(db as never)).find((item) => item.id === category!.id);
+
+    expect(refreshed?.subcategories.slice(0, 3).map((item) => item.id)).toEqual([
       reorderedIds[2],
       reorderedIds[0],
       reorderedIds[1],

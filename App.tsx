@@ -17,6 +17,7 @@ import {
   SpaceGrotesk_500Medium,
   SpaceGrotesk_700Bold,
 } from '@expo-google-fonts/space-grotesk';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { BudgetMeter, BudgetMonthStatusList, OverspendRankingList } from './src/components/BudgetPanels';
@@ -43,13 +44,15 @@ export default function App() {
   }
 
   return (
-    <SafeAreaProvider>
-      <SQLiteProvider databaseName="monthly-ledger.db" onInit={initializeDatabase} useSuspense>
-        <Suspense fallback={<LoadingScreen />}>
-          <LedgerApp />
-        </Suspense>
-      </SQLiteProvider>
-    </SafeAreaProvider>
+    <GestureHandlerRootView style={styles.gestureRoot}>
+      <SafeAreaProvider>
+        <SQLiteProvider databaseName="monthly-ledger.db" onInit={initializeDatabase} useSuspense>
+          <Suspense fallback={<LoadingScreen />}>
+            <LedgerApp />
+          </Suspense>
+        </SQLiteProvider>
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }
 
@@ -65,6 +68,7 @@ function LedgerApp() {
     renameCategory,
     deleteCategory,
     reorderCategories,
+    reorderSubcategories,
     createSubcategory,
     renameSubcategory,
     deleteSubcategory,
@@ -152,6 +156,7 @@ function LedgerApp() {
             onRenameCategory={renameCategory}
             onDeleteCategory={deleteCategory}
             onReorderCategories={reorderCategories}
+            onReorderSubcategories={reorderSubcategories}
             onCreateSubcategory={createSubcategory}
             onRenameSubcategory={renameSubcategory}
             onDeleteSubcategory={deleteSubcategory}
@@ -452,6 +457,9 @@ const TAB_ITEMS: Array<{ key: TabKey; label: string; icon: string }> = [
 ];
 
 const styles = StyleSheet.create({
+  gestureRoot: {
+    flex: 1,
+  },
   flex: {
     flex: 1,
   },
