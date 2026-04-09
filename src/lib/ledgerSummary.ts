@@ -1,6 +1,6 @@
-import { CATEGORY_DEFINITIONS, getCategoryDefinition } from '../constants/categories';
+import { getCategoryColor } from '../constants/categories';
 import { buildTrendWindowMonths } from './trendWindow';
-import type { ExpenseEntry } from '../types/ledger';
+import type { CategoryRecord, ExpenseEntry } from '../types/ledger';
 
 export interface CategoryTotal {
   name: string;
@@ -43,6 +43,7 @@ export interface LedgerSummary {
   categoryTotals: CategoryTotal[];
   selectedMonthRanking: CategoryTotal[];
   categoryMonthRanking: Record<string, CategoryMonthRankItem[]>;
+  categoryColors: Record<string, string>;
   defaultCategoryRankingName: string | null;
   selectedBudget: BudgetSnapshot;
   monthlyBudgetRows: BudgetMonthRow[];
@@ -100,8 +101,39 @@ function sortBudgetRowsByOverspend(left: BudgetMonthRow, right: BudgetMonthRow) 
   return right.monthKey.localeCompare(left.monthKey);
 }
 
+function buildCategoryColors(entries: ExpenseEntry[], categories: CategoryRecord[]) {
+  const categoryColors: Record<string, string> = {};
+  const names = new Set<string>();
+
+  for (const category of categories) {
+    names.add(category.name);
+  }
+
+  for (const entry of entries) {
+    names.add(entry.category);
+  }
+
+  for (const name of names) {
+    categoryColors[name] = getCategoryColor(name, categories);
+  }
+
+  return categoryColors;
+}
+
+function buildOrderedCategoryNames(entries: ExpenseEntry[], categories: CategoryRecord[]) {
+  const names = categories.map((category) => category.name);
+  const historicalOnlyNames = Array.from(new Set(entries.map((entry) => entry.category))).filter(
+    (name) => !names.includes(name)
+  );
+
+  historicalOnlyNames.sort((left, right) => left.localeCompare(right, 'zh-Hans-CN'));
+
+  return [...names, ...historicalOnlyNames];
+}
+
 export function buildLedgerSummary(
   entries: ExpenseEntry[],
+  categories: CategoryRecord[],
   selectedMonth: string,
   formatShortMonthLabel: (monthKey: string) => string
 ): LedgerSummary {
@@ -135,13 +167,14 @@ export function buildLedgerSummary(
     );
   }
 
+  const categoryColors = buildCategoryColors(entries, categories);
   const trackedMonthCount = monthlyTotals.size;
   const monthlyAverage = trackedMonthCount > 0 ? grandTotal / trackedMonthCount : 0;
 
   const selectedMonthRanking = Array.from(selectedCategoryTotals.entries())
     .map(([name, total]) => ({
       name,
-      color: getCategoryDefinition(name).color,
+      color: categoryColors[name] ?? getCategoryColor(name, categories),
       total,
       ratio: selectedTotal > 0 ? total / selectedTotal : 0,
     }))
@@ -175,33 +208,32 @@ export function buildLedgerSummary(
   const averageMonthlyOverspend = trackedMonthCount > 0 ? totalOverspend / trackedMonthCount : 0;
   const overspendRanking = monthlyBudgetRows.filter((row) => row.isOverBudget).sort(sortBudgetRowsByOverspend);
 
-  const categoryMonthRanking = CATEGORY_DEFINITIONS.reduce<Record<string, CategoryMonthRankItem[]>>(
-    (result, definition) => {
-      const rows = Array.from(monthCategoryTotals.entries())
-        .map(([monthKey, totals]) => {
-          const total = totals.get(definition.name) ?? 0;
+  const categoryMonthRanking = buildOrderedCategoryNames(entries, categories).reduce<
+    Record<string, CategoryMonthRankItem[]>
+  >((result, categoryName) => {
+    const rows = Array.from(monthCategoryTotals.entries())
+      .map(([monthKey, totals]) => {
+        const total = totals.get(categoryName) ?? 0;
 
-          if (total <= 0) {
-            return null;
-          }
+        if (total <= 0) {
+          return null;
+        }
 
-          return {
-            monthKey,
-            label: formatShortMonthLabel(monthKey),
-            total,
-          };
-        })
-        .filter((item): item is CategoryMonthRankItem => item !== null)
-        .sort(sortCategoryMonthItems);
+        return {
+          monthKey,
+          label: formatShortMonthLabel(monthKey),
+          total,
+        };
+      })
+      .filter((item): item is CategoryMonthRankItem => item !== null)
+      .sort(sortCategoryMonthItems);
 
-      if (rows.length > 0) {
-        result[definition.name] = rows;
-      }
+    if (rows.length > 0) {
+      result[categoryName] = rows;
+    }
 
-      return result;
-    },
-    {}
-  );
+    return result;
+  }, {});
 
   let defaultCategoryRankingName = selectedMonthRanking[0]?.name ?? null;
 
@@ -234,6 +266,7 @@ export function buildLedgerSummary(
     categoryTotals,
     selectedMonthRanking,
     categoryMonthRanking,
+    categoryColors,
     defaultCategoryRankingName,
     selectedBudget,
     monthlyBudgetRows,

@@ -1,6 +1,5 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { getCategoryDefinition } from '../constants/categories';
 import { formatCurrency } from '../lib/format';
 import type { CategoryMonthRankItem, CategoryTotal } from '../lib/ledgerSummary';
 
@@ -69,11 +68,13 @@ export function CategoryRankingList({
 export function CategoryMonthRankingCard({
   selectedCategory,
   categories,
+  categoryColors,
   rankingMap,
   onSelectCategory,
 }: {
   selectedCategory: string | null;
   categories: string[];
+  categoryColors: Record<string, string>;
   rankingMap: Record<string, CategoryMonthRankItem[]>;
   onSelectCategory: (category: string) => void;
 }) {
@@ -94,7 +95,7 @@ export function CategoryMonthRankingCard({
       <View style={styles.chipWrap}>
         {categories.map((category) => {
           const active = category === selectedCategory;
-          const color = getCategoryDefinition(category).color;
+          const color = categoryColors[category] ?? '#7E6C61';
 
           return (
             <Pressable

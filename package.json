@@ -1,6 +1,6 @@
 {
   "name": "monthly-ledger-mobile",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "main": "index.ts",
   "scripts": {
     "start": "expo start",
@@ -26,11 +26,15 @@
     "expo-system-ui": "~6.0.9",
     "react": "19.1.0",
     "react-native": "0.81.5",
+    "react-native-draggable-flatlist": "^4.0.3",
+    "react-native-gesture-handler": "~2.28.0",
+    "react-native-reanimated": "~4.1.1",
     "react-native-safe-area-context": "~5.6.0",
     "react-native-svg": "15.12.1"
   },
   "devDependencies": {
     "@types/react": "~19.1.0",
+    "babel-preset-expo": "^55.0.16",
     "typescript": "~5.9.2",
     "vitest": "^2.1.9"
   },
