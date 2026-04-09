@@ -19,6 +19,11 @@
   - 连续录入模式：保存后自动切换到下一个大类，最后一个大类保存后回到概览
   - 顶部提供“账单备份与导入”入口，以浮窗方式进行 JSON 备份和恢复
   - 键盘弹起时保存按钮会跟随键盘高度调整位置，减少遮挡
+- 分类管理
+  - 支持新增、改名、删除大类与细分
+  - 支持大类和细分拖拽排序，调整后立即保存顺序
+  - 细分默认收起，可按需展开查看，减少长列表压迫感
+  - 新增/改名输入框会悬浮在键盘上方，减少编辑遮挡
 - 趋势页
   - 查看 6 个月支出曲线与峰值
   - 左右滑动图表窗口，继续查看更早或更晚月份
@@ -30,6 +35,9 @@
 - React Native 0.81
 - TypeScript
 - expo-sqlite
+- react-native-gesture-handler
+- react-native-draggable-flatlist
+- react-native-reanimated
 - react-native-svg
 - Vitest
 
@@ -75,7 +83,7 @@ npm run android
 
 ```bash
 cd android
-.\gradlew.bat assembleRelease
+.\gradlew.bat assembleRelease -PreactNativeArchitectures=arm64-v8a
 ```
 
 生成物默认位于：
@@ -84,11 +92,22 @@ cd android
 android/app/build/outputs/apk/release/app-release.apk
 ```
 
+如果要作为发布附件分发，建议重命名为：
+
+```text
+android/app/build/outputs/apk/release/monthly-ledger-mobile-v1.0.7-release.apk
+```
+
 ### 安装到已连接手机
 
 ```bash
 adb install -r android/app/build/outputs/apk/release/app-release.apk
 ```
+
+### 已发布版本
+
+- GitHub Releases：[v1.0.7](https://github.com/wubq511/monthly-ledger-mobile/releases/tag/v1.0.7)
+- APK 下载：[monthly-ledger-mobile-v1.0.7-release.apk](https://github.com/wubq511/monthly-ledger-mobile/releases/download/v1.0.7/monthly-ledger-mobile-v1.0.7-release.apk)
 
 ## 签名说明
 
