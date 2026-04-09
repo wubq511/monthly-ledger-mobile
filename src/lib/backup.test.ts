@@ -59,11 +59,11 @@ const categories: CategoryRecord[] = [
 
 describe('backup helpers', () => {
   it('builds a schema-versioned payload with exported timestamp, entries, and categories', () => {
-    const payload = buildBackupPayload(entries, categories, '1.0.7', '2026-04-07T12:00:00.000Z');
+    const payload = buildBackupPayload(entries, categories, '1.0.8', '2026-04-07T12:00:00.000Z');
 
     expect(payload).toEqual({
       schemaVersion: BACKUP_SCHEMA_VERSION,
-      appVersion: '1.0.7',
+      appVersion: '1.0.8',
       exportedAt: '2026-04-07T12:00:00.000Z',
       entries,
       categories,
@@ -74,7 +74,7 @@ describe('backup helpers', () => {
     const parsed = parseBackupJson(
       JSON.stringify({
         schemaVersion: 2,
-        appVersion: '1.0.7',
+        appVersion: '1.0.8',
         exportedAt: '2026-04-07T12:00:00.000Z',
         entries,
         categories,
@@ -91,7 +91,7 @@ describe('backup helpers', () => {
       parseBackupJson(
         JSON.stringify({
           schemaVersion: 2,
-          appVersion: '1.0.7',
+          appVersion: '1.0.8',
           exportedAt: '2026-04-07T12:00:00.000Z',
           entries: [{ ...entries[0], monthKey: '2026-13' }],
           categories,
@@ -105,7 +105,7 @@ describe('backup helpers', () => {
       parseBackupJson(
         JSON.stringify({
           schemaVersion: 2,
-          appVersion: '1.0.7',
+          appVersion: '1.0.8',
           exportedAt: '2026-04-07T12:00:00.000Z',
           entries: [entries[0], { ...entries[0], note: '重复记录' }],
           categories,

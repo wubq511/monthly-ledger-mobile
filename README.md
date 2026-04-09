@@ -4,7 +4,7 @@
 
 ## 当前版本
 
-- 应用版本：`1.0.7`
+- 应用版本：`1.0.8`
 - Android 包名：`com.h.monthlyledger`
 - 数据存储：本地 SQLite
 
@@ -95,7 +95,7 @@ android/app/build/outputs/apk/release/app-release.apk
 如果要作为发布附件分发，建议重命名为：
 
 ```text
-android/app/build/outputs/apk/release/monthly-ledger-mobile-v1.0.7-release.apk
+android/app/build/outputs/apk/release/monthly-ledger-mobile-v1.0.8-release.apk
 ```
 
 ### 安装到已连接手机
@@ -106,8 +106,8 @@ adb install -r android/app/build/outputs/apk/release/app-release.apk
 
 ### 已发布版本
 
-- GitHub Releases：[v1.0.7](https://github.com/wubq511/monthly-ledger-mobile/releases/tag/v1.0.7)
-- APK 下载：[monthly-ledger-mobile-v1.0.7-release.apk](https://github.com/wubq511/monthly-ledger-mobile/releases/download/v1.0.7/monthly-ledger-mobile-v1.0.7-release.apk)
+- GitHub Releases：[v1.0.8](https://github.com/wubq511/monthly-ledger-mobile/releases/tag/v1.0.8)
+- APK 下载：[monthly-ledger-mobile-v1.0.8-release.apk](https://github.com/wubq511/monthly-ledger-mobile/releases/download/v1.0.8/monthly-ledger-mobile-v1.0.8-release.apk)
 
 ## 签名说明
 

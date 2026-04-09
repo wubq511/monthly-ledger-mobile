@@ -2,9 +2,9 @@
   "expo": {
     "name": "月度账本",
     "slug": "monthly-ledger-mobile",
-    "version": "1.0.7",
+    "version": "1.0.8",
     "orientation": "portrait",
-    "icon": "./assets/AndroidAPP.png",
+    "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "splash": {
@@ -17,10 +17,10 @@
     },
     "android": {
       "package": "com.h.monthlyledger",
-      "icon": "./assets/AndroidAPP.png",
-      "versionCode": 8,
+      "icon": "./assets/icon.png",
+      "versionCode": 9,
       "adaptiveIcon": {
-        "foregroundImage": "./assets/AndroidAPP.png",
+        "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#F7F0E8"
       },
       "edgeToEdgeEnabled": true,
