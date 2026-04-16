@@ -8,16 +8,13 @@ import * as Sharing from 'expo-sharing';
 
 import { buildBackupPayload, createBackupFileName, parseBackupJson } from '../lib/backup';
 import {
+  importBackupMerge,
   exportAllCategories,
   exportAllExpenses,
   getBudgetSettings,
-  mergeCategoryDefinitions,
-  importExpensesMerge,
-  replaceAllCategoryDefinitions,
-  replaceAllExpenses,
-  replaceBudgetSettings,
+  restoreBackupReplace,
 } from '../lib/database';
-import type { BudgetSettings, CategoryRecord, ExpenseEntry } from '../types/ledger';
+import type { ParsedLedgerBackupFile } from '../types/ledger';
 
 interface BackupActionsProps {
   onImported: () => Promise<void>;
@@ -44,25 +41,19 @@ export function BackupActions({ onImported }: BackupActionsProps) {
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const busy = busyLabel !== null;
 
-  const runMergeImport = async (
-    entries: ExpenseEntry[],
-    categories: CategoryRecord[],
-    budgetSettings: BudgetSettings
-  ) => {
+  const runMergeImport = async (backup: ParsedLedgerBackupFile) => {
     setBusyLabel('正在合并导入...');
 
     try {
-      const categoryResult = await mergeCategoryDefinitions(db, categories);
-      const result = await importExpensesMerge(db, entries);
-      await replaceBudgetSettings(db, budgetSettings);
+      const result = await importBackupMerge(db, backup);
       await onImported();
       Alert.alert(
         '导入完成',
-        formatMergeSummary(result.importedCount, result.skippedCount, {
-          imported: categoryResult.importedCategoryCount,
-          skipped: categoryResult.skippedCategoryCount,
-          importedSubcategories: categoryResult.importedSubcategoryCount,
-          skippedSubcategories: categoryResult.skippedSubcategoryCount,
+        formatMergeSummary(result.expenseResult.importedCount, result.expenseResult.skippedCount, {
+          imported: result.categoryResult.importedCategoryCount,
+          skipped: result.categoryResult.skippedCategoryCount,
+          importedSubcategories: result.categoryResult.importedSubcategoryCount,
+          skippedSubcategories: result.categoryResult.skippedSubcategoryCount,
         })
       );
     } catch (error) {
@@ -72,19 +63,13 @@ export function BackupActions({ onImported }: BackupActionsProps) {
     }
   };
 
-  const runReplaceRestore = async (
-    entries: ExpenseEntry[],
-    categories: CategoryRecord[],
-    budgetSettings: BudgetSettings
-  ) => {
+  const runReplaceRestore = async (backup: ParsedLedgerBackupFile) => {
     setBusyLabel('正在覆盖恢复...');
 
     try {
-      await replaceAllCategoryDefinitions(db, categories);
-      const result = await replaceAllExpenses(db, entries);
-      await replaceBudgetSettings(db, budgetSettings);
+      const result = await restoreBackupReplace(db, backup);
       await onImported();
-      Alert.alert('恢复完成', formatReplaceSummary(result.importedCount, categories.length));
+      Alert.alert('恢复完成', formatReplaceSummary(result.expenseResult.importedCount, backup.categories.length));
     } catch (error) {
       Alert.alert('恢复失败', getErrorMessage(error, '覆盖恢复失败'));
     } finally {
@@ -159,7 +144,7 @@ export function BackupActions({ onImported }: BackupActionsProps) {
           {
             text: '合并导入',
             onPress: () => {
-              void runMergeImport(backup.entries, backup.categories, backup.budgetSettings);
+              void runMergeImport(backup);
             },
           },
           {
@@ -172,7 +157,7 @@ export function BackupActions({ onImported }: BackupActionsProps) {
                   text: '确认覆盖',
                   style: 'destructive',
                   onPress: () => {
-                    void runReplaceRestore(backup.entries, backup.categories, backup.budgetSettings);
+                    void runReplaceRestore(backup);
                   },
                 },
               ]);

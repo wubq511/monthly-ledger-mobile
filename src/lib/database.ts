@@ -9,6 +9,7 @@ import type {
   ExpenseDraft,
   ExpenseEntry,
   ImportExpensesResult,
+  ParsedLedgerBackupFile,
   SubcategoryUsageSummary,
   SubcategoryRecord,
 } from '../types/ledger';
@@ -56,6 +57,17 @@ export interface ImportCategoryDefinitionsResult {
   importedSubcategoryCount: number;
   skippedCategoryCount: number;
   skippedSubcategoryCount: number;
+}
+
+export interface ImportBackupMergeResult {
+  categoryResult: ImportCategoryDefinitionsResult;
+  expenseResult: ImportExpensesResult;
+  budgetSettingsApplied: boolean;
+}
+
+export interface ReplaceBackupResult {
+  expenseResult: ImportExpensesResult;
+  budgetSettingsApplied: boolean;
 }
 
 function mapExpenseRow(row: ExpenseRow): ExpenseEntry {
@@ -292,17 +304,21 @@ export async function clearMonthlyBudgetOverride(db: SQLiteDatabase, monthKey: s
   await db.runAsync(`DELETE FROM budget_settings WHERE scope = 'month' AND month_key = ?`, [monthKey]);
 }
 
+async function replaceBudgetSettingsContents(db: SQLiteDatabase, settings: BudgetSettings) {
+  await db.runAsync('DELETE FROM budget_settings');
+
+  if (settings.defaultBudget !== null) {
+    await setDefaultBudget(db, settings.defaultBudget);
+  }
+
+  for (const [monthKey, amount] of Object.entries(settings.monthlyBudgets)) {
+    await setMonthlyBudgetOverride(db, monthKey, amount);
+  }
+}
+
 export async function replaceBudgetSettings(db: SQLiteDatabase, settings: BudgetSettings) {
   await db.withTransactionAsync(async () => {
-    await db.runAsync('DELETE FROM budget_settings');
-
-    if (settings.defaultBudget !== null) {
-      await setDefaultBudget(db, settings.defaultBudget);
-    }
-
-    for (const [monthKey, amount] of Object.entries(settings.monthlyBudgets)) {
-      await setMonthlyBudgetOverride(db, monthKey, amount);
-    }
+    await replaceBudgetSettingsContents(db, settings);
   });
 }
 
@@ -494,18 +510,22 @@ export async function getSubcategoryUsageSummary(
   };
 }
 
+async function replaceAllCategoryDefinitionsContents(db: SQLiteDatabase, categories: CategoryRecord[]) {
+  await db.runAsync('DELETE FROM subcategories');
+  await db.runAsync('DELETE FROM categories');
+
+  for (const category of categories) {
+    await insertCategoryDefinition(db, category);
+  }
+}
+
 export async function replaceAllCategoryDefinitions(db: SQLiteDatabase, categories: CategoryRecord[]) {
   await db.withTransactionAsync(async () => {
-    await db.runAsync('DELETE FROM subcategories');
-    await db.runAsync('DELETE FROM categories');
-
-    for (const category of categories) {
-      await insertCategoryDefinition(db, category);
-    }
+    await replaceAllCategoryDefinitionsContents(db, categories);
   });
 }
 
-export async function mergeCategoryDefinitions(
+async function mergeCategoryDefinitionsContents(
   db: SQLiteDatabase,
   importedCategories: CategoryRecord[]
 ): Promise<ImportCategoryDefinitionsResult> {
@@ -586,7 +606,14 @@ export async function mergeCategoryDefinitions(
   return result;
 }
 
-export async function importExpensesMerge(
+export async function mergeCategoryDefinitions(
+  db: SQLiteDatabase,
+  importedCategories: CategoryRecord[]
+): Promise<ImportCategoryDefinitionsResult> {
+  return db.withTransactionAsync(async () => mergeCategoryDefinitionsContents(db, importedCategories));
+}
+
+async function importExpensesMergeContents(
   db: SQLiteDatabase,
   entries: ExpenseEntry[]
 ): Promise<ImportExpensesResult> {
@@ -613,7 +640,14 @@ export async function importExpensesMerge(
   return result;
 }
 
-export async function replaceAllExpenses(
+export async function importExpensesMerge(
+  db: SQLiteDatabase,
+  entries: ExpenseEntry[]
+): Promise<ImportExpensesResult> {
+  return db.withTransactionAsync(async () => importExpensesMergeContents(db, entries));
+}
+
+async function replaceAllExpensesContents(
   db: SQLiteDatabase,
   entries: ExpenseEntry[]
 ): Promise<ImportExpensesResult> {
@@ -636,6 +670,52 @@ export async function replaceAllExpenses(
   });
 
   return result;
+}
+
+export async function replaceAllExpenses(
+  db: SQLiteDatabase,
+  entries: ExpenseEntry[]
+): Promise<ImportExpensesResult> {
+  return db.withTransactionAsync(async () => replaceAllExpensesContents(db, entries));
+}
+
+export async function importBackupMerge(
+  db: SQLiteDatabase,
+  backup: ParsedLedgerBackupFile
+): Promise<ImportBackupMergeResult> {
+  return db.withTransactionAsync(async () => {
+    const categoryResult = await mergeCategoryDefinitionsContents(db, backup.categories);
+    const expenseResult = await importExpensesMergeContents(db, backup.entries);
+
+    if (backup.hasBudgetSettings) {
+      await replaceBudgetSettingsContents(db, backup.budgetSettings);
+    }
+
+    return {
+      categoryResult,
+      expenseResult,
+      budgetSettingsApplied: backup.hasBudgetSettings,
+    };
+  });
+}
+
+export async function restoreBackupReplace(
+  db: SQLiteDatabase,
+  backup: ParsedLedgerBackupFile
+): Promise<ReplaceBackupResult> {
+  return db.withTransactionAsync(async () => {
+    await replaceAllCategoryDefinitionsContents(db, backup.categories);
+    const expenseResult = await replaceAllExpensesContents(db, backup.entries);
+
+    if (backup.hasBudgetSettings) {
+      await replaceBudgetSettingsContents(db, backup.budgetSettings);
+    }
+
+    return {
+      expenseResult,
+      budgetSettingsApplied: backup.hasBudgetSettings,
+    };
+  });
 }
 
 async function insertImportedExpense(db: SQLiteDatabase, entry: ExpenseEntry) {

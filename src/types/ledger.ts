@@ -27,6 +27,10 @@ export interface LedgerBackupFile {
   budgetSettings: BudgetSettings;
 }
 
+export interface ParsedLedgerBackupFile extends LedgerBackupFile {
+  hasBudgetSettings: boolean;
+}
+
 export interface ImportExpensesResult {
   importedCount: number;
   skippedCount: number;

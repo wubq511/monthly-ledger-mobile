@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import * as database from './database';
-import type { ExpenseDraft, ExpenseEntry } from '../types/ledger';
+import type { ExpenseDraft, ExpenseEntry, ParsedLedgerBackupFile } from '../types/ledger';
 
 interface CategoryRow {
   id: string;
@@ -66,6 +66,26 @@ interface DatabaseApi {
     db: never,
     settings: { defaultBudget: number | null; monthlyBudgets: Record<string, number> }
   ) => Promise<void>;
+  importBackupMerge: (
+    db: never,
+    backup: ParsedLedgerBackupFile
+  ) => Promise<{
+    categoryResult: {
+      importedCategoryCount: number;
+      importedSubcategoryCount: number;
+      skippedCategoryCount: number;
+      skippedSubcategoryCount: number;
+    };
+    expenseResult: { importedCount: number; skippedCount: number };
+    budgetSettingsApplied: boolean;
+  }>;
+  restoreBackupReplace: (
+    db: never,
+    backup: ParsedLedgerBackupFile
+  ) => Promise<{
+    expenseResult: { importedCount: number; skippedCount: number };
+    budgetSettingsApplied: boolean;
+  }>;
 }
 
 function requireDatabaseApi<K extends keyof DatabaseApi>(key: K): DatabaseApi[K] {
@@ -81,14 +101,16 @@ class FakeDatabase {
   budgetSettings: BudgetSettingRow[];
   execStatements: string[];
   runStatements: Array<{ sql: string; params: unknown[] }>;
+  failOnSqlPrefix: string | null;
 
-  constructor(rows: ExpenseEntry[]) {
+  constructor(rows: ExpenseEntry[], failOnSqlPrefix: string | null = null) {
     this.rows = [...rows];
     this.categories = [];
     this.subcategories = [];
     this.budgetSettings = [];
     this.execStatements = [];
     this.runStatements = [];
+    this.failOnSqlPrefix = failOnSqlPrefix;
   }
 
   async execAsync(sql: string) {
@@ -164,6 +186,10 @@ class FakeDatabase {
 
   async runAsync(sql: string, params: unknown[] = []) {
     const normalized = normalizeSql(sql);
+    if (this.failOnSqlPrefix && normalized.startsWith(this.failOnSqlPrefix)) {
+      throw new Error('simulated failure');
+    }
+
     this.runStatements.push({ sql, params: [...params] });
 
     if (normalized.startsWith('DELETE FROM EXPENSES WHERE ID = ?')) {
@@ -335,7 +361,26 @@ class FakeDatabase {
   }
 
   async withTransactionAsync<T>(task: () => Promise<T>) {
-    return task();
+    const snapshot = {
+      rows: this.rows.map((row) => ({ ...row })),
+      categories: this.categories.map((row) => ({ ...row })),
+      subcategories: this.subcategories.map((row) => ({ ...row })),
+      budgetSettings: this.budgetSettings.map((row) => ({ ...row })),
+      execStatements: [...this.execStatements],
+      runStatements: this.runStatements.map((row) => ({ sql: row.sql, params: [...row.params] })),
+    };
+
+    try {
+      return await task();
+    } catch (error) {
+      this.rows = snapshot.rows;
+      this.categories = snapshot.categories;
+      this.subcategories = snapshot.subcategories;
+      this.budgetSettings = snapshot.budgetSettings;
+      this.execStatements = snapshot.execStatements;
+      this.runStatements = snapshot.runStatements;
+      throw error;
+    }
   }
 }
 
@@ -367,6 +412,62 @@ const incoming: ExpenseEntry[] = [
     createdAt: '2026-05-01T00:00:00.000Z',
   },
 ];
+
+const importedCategories = [
+  {
+    id: 'imported-category-1',
+    name: '旅行',
+    color: '#6B8E23',
+    sortOrder: 0,
+    createdAt: '2026-04-16T12:00:00.000Z',
+    updatedAt: '2026-04-16T12:00:00.000Z',
+    subcategories: [
+      {
+        id: 'imported-subcategory-1',
+        categoryId: 'imported-category-1',
+        name: '机票',
+        sortOrder: 0,
+        createdAt: '2026-04-16T12:00:00.000Z',
+        updatedAt: '2026-04-16T12:00:00.000Z',
+      },
+    ],
+  },
+];
+
+const legacyBackup: ParsedLedgerBackupFile = {
+  schemaVersion: 2,
+  appVersion: '1.0.8',
+  exportedAt: '2026-04-16T12:00:00.000Z',
+  entries: [
+    {
+      id: 'legacy-expense-1',
+      monthKey: '2026-04',
+      amount: 88,
+      category: '旅行',
+      subcategory: '机票',
+      note: null,
+      createdAt: '2026-04-16T12:00:00.000Z',
+    },
+  ],
+  categories: importedCategories,
+  budgetSettings: {
+    defaultBudget: null,
+    monthlyBudgets: {},
+  },
+  hasBudgetSettings: false,
+};
+
+const schema3Backup: ParsedLedgerBackupFile = {
+  ...legacyBackup,
+  schemaVersion: 3,
+  budgetSettings: {
+    defaultBudget: 3200,
+    monthlyBudgets: {
+      '2026-04': 3000,
+    },
+  },
+  hasBudgetSettings: true,
+};
 
 describe('database backup operations', () => {
   it('exports all expenses as ledger entries', async () => {
@@ -708,5 +809,160 @@ describe('database budget persistence', () => {
         '2026-04': 3000,
       },
     });
+  });
+
+  it('preserves existing budgets when importing a legacy backup', async () => {
+    const db = new FakeDatabase([]);
+    const initializeDatabase = requireDatabaseApi('initializeDatabase');
+    const setDefaultBudget = requireDatabaseApi('setDefaultBudget');
+    const setMonthlyBudgetOverride = requireDatabaseApi('setMonthlyBudgetOverride');
+    const importBackupMerge = requireDatabaseApi('importBackupMerge');
+    const getBudgetSettings = requireDatabaseApi('getBudgetSettings');
+
+    await initializeDatabase(db as never);
+    await setDefaultBudget(db as never, 2600);
+    await setMonthlyBudgetOverride(db as never, '2026-03', 2400);
+
+    await expect(importBackupMerge(db as never, legacyBackup)).resolves.toEqual({
+      categoryResult: {
+        importedCategoryCount: 1,
+        importedSubcategoryCount: 1,
+        skippedCategoryCount: 0,
+        skippedSubcategoryCount: 0,
+      },
+      expenseResult: {
+        importedCount: 1,
+        skippedCount: 0,
+      },
+      budgetSettingsApplied: false,
+    });
+
+    await expect(getBudgetSettings(db as never)).resolves.toEqual({
+      defaultBudget: 2600,
+      monthlyBudgets: {
+        '2026-03': 2400,
+      },
+    });
+  });
+
+  it('applies schema 3 budgets when importing a backup', async () => {
+    const db = new FakeDatabase([]);
+    const initializeDatabase = requireDatabaseApi('initializeDatabase');
+    const setDefaultBudget = requireDatabaseApi('setDefaultBudget');
+    const setMonthlyBudgetOverride = requireDatabaseApi('setMonthlyBudgetOverride');
+    const importBackupMerge = requireDatabaseApi('importBackupMerge');
+    const getBudgetSettings = requireDatabaseApi('getBudgetSettings');
+
+    await initializeDatabase(db as never);
+    await setDefaultBudget(db as never, 2600);
+    await setMonthlyBudgetOverride(db as never, '2026-03', 2400);
+
+    await expect(importBackupMerge(db as never, schema3Backup)).resolves.toEqual({
+      categoryResult: {
+        importedCategoryCount: 1,
+        importedSubcategoryCount: 1,
+        skippedCategoryCount: 0,
+        skippedSubcategoryCount: 0,
+      },
+      expenseResult: {
+        importedCount: 1,
+        skippedCount: 0,
+      },
+      budgetSettingsApplied: true,
+    });
+
+    await expect(getBudgetSettings(db as never)).resolves.toEqual({
+      defaultBudget: 3200,
+      monthlyBudgets: {
+        '2026-04': 3000,
+      },
+    });
+  });
+
+  it('preserves existing budgets when restoring a legacy backup', async () => {
+    const db = new FakeDatabase([]);
+    const initializeDatabase = requireDatabaseApi('initializeDatabase');
+    const setDefaultBudget = requireDatabaseApi('setDefaultBudget');
+    const setMonthlyBudgetOverride = requireDatabaseApi('setMonthlyBudgetOverride');
+    const restoreBackupReplace = requireDatabaseApi('restoreBackupReplace');
+    const getBudgetSettings = requireDatabaseApi('getBudgetSettings');
+
+    await initializeDatabase(db as never);
+    await setDefaultBudget(db as never, 2600);
+    await setMonthlyBudgetOverride(db as never, '2026-03', 2400);
+
+    await expect(restoreBackupReplace(db as never, legacyBackup)).resolves.toEqual({
+      expenseResult: {
+        importedCount: 1,
+        skippedCount: 0,
+      },
+      budgetSettingsApplied: false,
+    });
+
+    await expect(getBudgetSettings(db as never)).resolves.toEqual({
+      defaultBudget: 2600,
+      monthlyBudgets: {
+        '2026-03': 2400,
+      },
+    });
+  });
+
+  it('applies schema 3 budgets when restoring a backup', async () => {
+    const db = new FakeDatabase([]);
+    const initializeDatabase = requireDatabaseApi('initializeDatabase');
+    const setDefaultBudget = requireDatabaseApi('setDefaultBudget');
+    const setMonthlyBudgetOverride = requireDatabaseApi('setMonthlyBudgetOverride');
+    const restoreBackupReplace = requireDatabaseApi('restoreBackupReplace');
+    const getBudgetSettings = requireDatabaseApi('getBudgetSettings');
+
+    await initializeDatabase(db as never);
+    await setDefaultBudget(db as never, 2600);
+    await setMonthlyBudgetOverride(db as never, '2026-03', 2400);
+
+    await expect(restoreBackupReplace(db as never, schema3Backup)).resolves.toEqual({
+      expenseResult: {
+        importedCount: 1,
+        skippedCount: 0,
+      },
+      budgetSettingsApplied: true,
+    });
+
+    await expect(getBudgetSettings(db as never)).resolves.toEqual({
+      defaultBudget: 3200,
+      monthlyBudgets: {
+        '2026-04': 3000,
+      },
+    });
+  });
+
+  it('rolls back a combined restore if the final budget step fails', async () => {
+    const db = new FakeDatabase([]);
+    const initializeDatabase = requireDatabaseApi('initializeDatabase');
+    const setDefaultBudget = requireDatabaseApi('setDefaultBudget');
+    const setMonthlyBudgetOverride = requireDatabaseApi('setMonthlyBudgetOverride');
+    const restoreBackupReplace = requireDatabaseApi('restoreBackupReplace');
+    const getBudgetSettings = requireDatabaseApi('getBudgetSettings');
+    const getAllCategories = requireDatabaseApi('getAllCategories');
+    const getAllExpenses = requireDatabaseApi('getAllExpenses');
+
+    await initializeDatabase(db as never);
+    await setDefaultBudget(db as never, 2600);
+    await setMonthlyBudgetOverride(db as never, '2026-03', 2400);
+    db.failOnSqlPrefix = 'INSERT INTO BUDGET_SETTINGS';
+
+    await expect(restoreBackupReplace(db as never, schema3Backup)).rejects.toThrow('simulated failure');
+
+    await expect(getBudgetSettings(db as never)).resolves.toEqual({
+      defaultBudget: 2600,
+      monthlyBudgets: {
+        '2026-03': 2400,
+      },
+    });
+
+    const categories = await getAllCategories(db as never);
+    const expenses = await getAllExpenses(db as never);
+
+    expect(categories.length).toBeGreaterThan(0);
+    expect(expenses).toHaveLength(0);
   });
 });

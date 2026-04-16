@@ -4,6 +4,7 @@ import type {
   CategoryRecord,
   ExpenseEntry,
   LedgerBackupFile,
+  ParsedLedgerBackupFile,
   SubcategoryRecord,
 } from '../types/ledger';
 
@@ -41,7 +42,7 @@ export function createBackupFileName(exportedAt: string) {
   return `monthly-ledger-backup-${year}-${month}-${day}.json`;
 }
 
-export function parseBackupJson(raw: string): LedgerBackupFile {
+export function parseBackupJson(raw: string): ParsedLedgerBackupFile {
   let parsed: unknown;
 
   try {
@@ -111,6 +112,7 @@ export function parseBackupJson(raw: string): LedgerBackupFile {
     entries,
     categories,
     budgetSettings,
+    hasBudgetSettings: isCurrentSchema,
   };
 }
 

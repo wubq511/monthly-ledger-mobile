@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
 import * as backup from './backup';
-import type { BudgetSettings, CategoryRecord, ExpenseEntry, LedgerBackupFile } from '../types/ledger';
+import type {
+  BudgetSettings,
+  CategoryRecord,
+  ExpenseEntry,
+  LedgerBackupFile,
+  ParsedLedgerBackupFile,
+} from '../types/ledger';
 
 type BuildBackupPayload = (
   entries: ExpenseEntry[],
@@ -12,7 +18,7 @@ type BuildBackupPayload = (
 ) => LedgerBackupFile;
 
 const buildBackupPayload = backup.buildBackupPayload as unknown as BuildBackupPayload;
-const parseBackupJson = backup.parseBackupJson;
+const parseBackupJson = backup.parseBackupJson as unknown as (raw: string) => ParsedLedgerBackupFile;
 const createBackupFileName = backup.createBackupFileName;
 const BACKUP_SCHEMA_VERSION = backup.BACKUP_SCHEMA_VERSION;
 
@@ -119,6 +125,7 @@ describe('backup helpers', () => {
     expect(parsed.categories[0]?.name).toBe('饮食');
     expect(parsed.categories[0]?.subcategories[0]?.name).toBe('食堂');
     expect(parsed.budgetSettings).toEqual(budgetSettings);
+    expect(parsed.hasBudgetSettings).toBe(true);
   });
 
   it('accepts legacy backup files without budget settings and falls back to empty config', () => {
@@ -136,6 +143,7 @@ describe('backup helpers', () => {
       defaultBudget: null,
       monthlyBudgets: {},
     });
+    expect(parsed.hasBudgetSettings).toBe(false);
   });
 
   it('rejects malformed backup documents', () => {
