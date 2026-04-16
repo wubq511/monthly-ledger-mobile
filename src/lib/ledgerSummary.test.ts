@@ -173,6 +173,40 @@ describe('buildLedgerSummary', () => {
     expect(summary.overspendMonthCount).toBe(1);
   });
 
+  it('includes override-only months in monthly budget rows without changing aggregate tracked-month totals', () => {
+    const summary = buildLedgerSummary(
+      entries,
+      categories,
+      '2026-03',
+      {
+        defaultBudget: 2400,
+        monthlyBudgets: {
+          '2026-03': 1800,
+          '2026-04': 900,
+        },
+      },
+      (monthKey) => monthKey.slice(5)
+    );
+
+    expect(
+      summary.monthlyBudgetRows.map((row: ledgerSummary.BudgetMonthRow) => ({
+        monthKey: row.monthKey,
+        total: row.total,
+        budgetLimit: row.budgetLimit,
+      }))
+    ).toEqual([
+      { monthKey: '2026-04', total: 0, budgetLimit: 900 },
+      { monthKey: '2026-03', total: 2400, budgetLimit: 1800 },
+      { monthKey: '2026-02', total: 800, budgetLimit: 2400 },
+      { monthKey: '2026-01', total: 2150, budgetLimit: 2400 },
+    ]);
+    expect(summary.totalOverspend).toBe(600);
+    expect(summary.totalRemaining).toBe(1850);
+    expect(summary.netBudgetBalance).toBe(1250);
+    expect(summary.averageMonthlyOverspend).toBe(200);
+    expect(summary.overspendMonthCount).toBe(1);
+  });
+
   it('orders selected month category ranking and per-category month ranking', () => {
     const summary = buildLedgerSummary(
       entries,

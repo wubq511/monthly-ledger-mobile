@@ -190,6 +190,18 @@ export function buildLedgerSummary(
   const trackedMonthCount = monthlyTotals.size;
   const monthlyAverage = trackedMonthCount > 0 ? grandTotal / trackedMonthCount : 0;
   const selectedBudgetLimit = resolveMonthBudgetLimit(resolvedBudgetSettings, selectedMonth);
+  const trackedBudgetRows = Array.from(monthlyTotals.entries())
+    .map(([monthKey, total]) => ({
+      monthKey,
+      label: formatShortMonthLabel(monthKey),
+      ...buildBudgetSnapshot(total, resolveMonthBudgetLimit(resolvedBudgetSettings, monthKey)),
+    }))
+    .sort(sortBudgetRowsByMonth);
+
+  const monthlyBudgetMonthKeys = new Set<string>(monthlyTotals.keys());
+  for (const monthKey of Object.keys(resolvedBudgetSettings.monthlyBudgets)) {
+    monthlyBudgetMonthKeys.add(monthKey);
+  }
 
   const selectedMonthRanking = Array.from(selectedCategoryTotals.entries())
     .map(([name, total]) => ({
@@ -203,19 +215,23 @@ export function buildLedgerSummary(
   const categoryTotals = selectedMonthRanking;
   const selectedBudget = buildBudgetSnapshot(selectedTotal, selectedBudgetLimit);
 
-  const monthlyBudgetRows = Array.from(monthlyTotals.entries())
-    .map(([monthKey, total]) => ({
-      monthKey,
-      label: formatShortMonthLabel(monthKey),
-      ...buildBudgetSnapshot(total, resolveMonthBudgetLimit(resolvedBudgetSettings, monthKey)),
-    }))
+  const monthlyBudgetRows = Array.from(monthlyBudgetMonthKeys)
+    .map((monthKey) => {
+      const total = monthlyTotals.get(monthKey) ?? 0;
+
+      return {
+        monthKey,
+        label: formatShortMonthLabel(monthKey),
+        ...buildBudgetSnapshot(total, resolveMonthBudgetLimit(resolvedBudgetSettings, monthKey)),
+      };
+    })
     .sort(sortBudgetRowsByMonth);
 
   let totalOverspend = 0;
   let totalRemaining = 0;
   let overspendMonthCount = 0;
 
-  for (const row of monthlyBudgetRows) {
+  for (const row of trackedBudgetRows) {
     totalOverspend += row.overspend;
     totalRemaining += row.remaining;
 
@@ -226,7 +242,7 @@ export function buildLedgerSummary(
 
   const netBudgetBalance = totalRemaining - totalOverspend;
   const averageMonthlyOverspend = trackedMonthCount > 0 ? totalOverspend / trackedMonthCount : 0;
-  const overspendRanking = monthlyBudgetRows.filter((row) => row.isOverBudget).sort(sortBudgetRowsByOverspend);
+  const overspendRanking = trackedBudgetRows.filter((row) => row.isOverBudget).sort(sortBudgetRowsByOverspend);
 
   const categoryMonthRanking = buildOrderedCategoryNames(entries, categories).reduce<
     Record<string, CategoryMonthRankItem[]>

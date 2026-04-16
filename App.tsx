@@ -84,24 +84,24 @@ function LedgerApp() {
   const [activeTab, setActiveTab] = useState<TabKey>('overview');
   const [selectedMonth, setSelectedMonth] = useState(getCurrentMonthKey());
   const [selectedRankingCategory, setSelectedRankingCategory] = useState<string | null>(null);
-  const [budgetSettings, setBudgetSettings] = useState<BudgetSettings>(EMPTY_BUDGET_SETTINGS);
+  const [budgetSettings, setBudgetSettings] = useState<BudgetSettings | null>(null);
 
-  const loading = entriesLoading || categoriesLoading;
+  const loading = entriesLoading || categoriesLoading || budgetSettings === null;
   const error = entriesError ?? categoriesError;
-  const summary = buildLedgerSummary(
-    entries,
-    categories,
-    selectedMonth,
-    budgetSettings,
-    formatShortMonthLabel
-  );
-  const rankingCategories = Object.keys(summary.categoryMonthRanking);
+  const summary = budgetSettings
+    ? buildLedgerSummary(entries, categories, selectedMonth, budgetSettings, formatShortMonthLabel)
+    : null;
+  const rankingCategories = summary ? Object.keys(summary.categoryMonthRanking) : [];
   const rankingCategoryKey = rankingCategories.join('|');
   const hasSelectedRankingCategory = selectedRankingCategory
     ? rankingCategories.includes(selectedRankingCategory)
     : false;
 
   useEffect(() => {
+    if (!summary) {
+      return;
+    }
+
     if (rankingCategories.length === 0) {
       if (selectedRankingCategory !== null) {
         setSelectedRankingCategory(null);
@@ -112,10 +112,12 @@ function LedgerApp() {
     if (!selectedRankingCategory || !hasSelectedRankingCategory) {
       setSelectedRankingCategory(summary.defaultCategoryRankingName);
     }
-  }, [hasSelectedRankingCategory, rankingCategoryKey, selectedRankingCategory, summary.defaultCategoryRankingName]);
+  }, [hasSelectedRankingCategory, rankingCategoryKey, selectedRankingCategory, summary]);
 
   useEffect(() => {
     let cancelled = false;
+
+    setBudgetSettings(null);
 
     void getBudgetSettings(db)
       .then((settings) => {
@@ -133,6 +135,10 @@ function LedgerApp() {
       cancelled = true;
     };
   }, [db]);
+
+  if (loading || !summary) {
+    return <LoadingScreen />;
+  }
 
   const handleAddExpense = async (draft: ExpenseDraft) => {
     await addEntry(draft);
@@ -183,7 +189,19 @@ function LedgerApp() {
             onSubmit={handleAddExpense}
             onCompleteSequence={() => setActiveTab('overview')}
             onImported={async () => {
-              await Promise.all([refresh(), refreshCategories()]);
+              setBudgetSettings(null);
+
+              await Promise.all([
+                refresh(),
+                refreshCategories(),
+                getBudgetSettings(db)
+                  .then((settings) => {
+                    setBudgetSettings(settings);
+                  })
+                  .catch(() => {
+                    setBudgetSettings(EMPTY_BUDGET_SETTINGS);
+                  }),
+              ]);
             }}
             onCreateCategory={createCategory}
             onRenameCategory={renameCategory}
