@@ -74,3 +74,8 @@ export interface SubcategoryUsageSummary {
   subcategoryName: string;
   expenseCount: number;
 }
+
+export interface BudgetSettings {
+  defaultBudget: number | null;
+  monthlyBudgets: Record<string, number>;
+}

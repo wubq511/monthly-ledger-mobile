@@ -21,6 +21,13 @@ interface SubcategoryRow {
   updatedAt: string;
 }
 
+interface BudgetSettingRow {
+  scope: string;
+  monthKey: string;
+  amount: number;
+  updatedAt: string;
+}
+
 interface CategoryRecordLike {
   id: string;
   name: string;
@@ -48,6 +55,13 @@ interface DatabaseApi {
   renameSubcategory: (db: never, id: string, name: string) => Promise<void>;
   updateCategoryOrder: (db: never, idsInOrder: string[]) => Promise<void>;
   updateSubcategoryOrder: (db: never, categoryId: string, idsInOrder: string[]) => Promise<void>;
+  getBudgetSettings: (db: never) => Promise<{
+    defaultBudget: number | null;
+    monthlyBudgets: Record<string, number>;
+  }>;
+  setDefaultBudget: (db: never, amount: number) => Promise<void>;
+  setMonthlyBudgetOverride: (db: never, monthKey: string, amount: number) => Promise<void>;
+  clearMonthlyBudgetOverride: (db: never, monthKey: string) => Promise<void>;
 }
 
 function requireDatabaseApi<K extends keyof DatabaseApi>(key: K): DatabaseApi[K] {
@@ -60,11 +74,13 @@ class FakeDatabase {
   rows: ExpenseEntry[];
   categories: CategoryRow[];
   subcategories: SubcategoryRow[];
+  budgetSettings: BudgetSettingRow[];
 
   constructor(rows: ExpenseEntry[]) {
     this.rows = [...rows];
     this.categories = [];
     this.subcategories = [];
+    this.budgetSettings = [];
   }
 
   async execAsync() {
@@ -123,6 +139,17 @@ class FakeDatabase {
         }));
     }
 
+    if (normalized.includes('FROM BUDGET_SETTINGS')) {
+      return this.budgetSettings
+        .slice()
+        .sort((left, right) => left.monthKey.localeCompare(right.monthKey))
+        .map((row) => ({
+          scope: row.scope,
+          month_key: row.monthKey,
+          amount: row.amount,
+        }));
+    }
+
     return [];
   }
 
@@ -176,6 +203,25 @@ class FakeDatabase {
       return;
     }
 
+    if (normalized.startsWith('INSERT INTO BUDGET_SETTINGS')) {
+      const scope = normalized.includes("VALUES ('DEFAULT'") ? 'default' : 'month';
+      const monthKey = scope === 'default' ? '' : (params[0] as string);
+      const amount = scope === 'default' ? (params[0] as number) : (params[1] as number);
+      const updatedAt = scope === 'default' ? (params[1] as string) : (params[2] as string);
+
+      this.budgetSettings = this.budgetSettings.filter(
+        (row) => !(row.scope === scope && row.monthKey === monthKey)
+      );
+
+      this.budgetSettings.push({
+        scope,
+        monthKey,
+        amount,
+        updatedAt,
+      });
+      return;
+    }
+
     if (normalized.startsWith('UPDATE CATEGORIES SET NAME = ?, UPDATED_AT = ? WHERE ID = ?')) {
       this.categories = this.categories.map((row) =>
         row.id === params[2]
@@ -216,6 +262,13 @@ class FakeDatabase {
 
     if (normalized.startsWith('DELETE FROM SUBCATEGORIES WHERE CATEGORY_ID = ?')) {
       this.subcategories = this.subcategories.filter((row) => row.categoryId !== params[0]);
+      return;
+    }
+
+    if (normalized.startsWith("DELETE FROM BUDGET_SETTINGS WHERE SCOPE = 'MONTH' AND MONTH_KEY = ?")) {
+      this.budgetSettings = this.budgetSettings.filter(
+        (row) => !(row.scope === 'month' && row.monthKey === params[0])
+      );
       return;
     }
 
@@ -500,5 +553,45 @@ describe('database category persistence', () => {
       reorderedIds[0],
       reorderedIds[1],
     ]);
+  });
+});
+
+describe('database budget persistence', () => {
+  it('stores and reads the default budget and monthly overrides', async () => {
+    const db = new FakeDatabase([]);
+    const initializeDatabase = requireDatabaseApi('initializeDatabase');
+    const getBudgetSettings = requireDatabaseApi('getBudgetSettings');
+    const setDefaultBudget = requireDatabaseApi('setDefaultBudget');
+    const setMonthlyBudgetOverride = requireDatabaseApi('setMonthlyBudgetOverride');
+
+    await initializeDatabase(db as never);
+    await setDefaultBudget(db as never, 3200);
+    await setMonthlyBudgetOverride(db as never, '2026-04', 2800);
+
+    await expect(getBudgetSettings(db as never)).resolves.toEqual({
+      defaultBudget: 3200,
+      monthlyBudgets: {
+        '2026-04': 2800,
+      },
+    });
+  });
+
+  it('removes a monthly override without touching the default budget', async () => {
+    const db = new FakeDatabase([]);
+    const initializeDatabase = requireDatabaseApi('initializeDatabase');
+    const setDefaultBudget = requireDatabaseApi('setDefaultBudget');
+    const setMonthlyBudgetOverride = requireDatabaseApi('setMonthlyBudgetOverride');
+    const clearMonthlyBudgetOverride = requireDatabaseApi('clearMonthlyBudgetOverride');
+    const getBudgetSettings = requireDatabaseApi('getBudgetSettings');
+
+    await initializeDatabase(db as never);
+    await setDefaultBudget(db as never, 2600);
+    await setMonthlyBudgetOverride(db as never, '2026-05', 3000);
+    await clearMonthlyBudgetOverride(db as never, '2026-05');
+
+    await expect(getBudgetSettings(db as never)).resolves.toEqual({
+      defaultBudget: 2600,
+      monthlyBudgets: {},
+    });
   });
 });

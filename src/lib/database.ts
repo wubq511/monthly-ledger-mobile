@@ -2,6 +2,7 @@ import type { SQLiteDatabase } from 'expo-sqlite';
 
 import { CATEGORY_DEFINITIONS, getSeedColorByIndex } from '../constants/categories';
 import type {
+  BudgetSettings,
   CategoryRecord,
   CategoryUsageSummary,
   CreateCategoryInput,
@@ -42,6 +43,12 @@ interface SubcategoryRow {
   sort_order: number;
   created_at: string;
   updated_at: string;
+}
+
+interface BudgetSettingRow {
+  scope: string;
+  month_key: string;
+  amount: number;
 }
 
 export interface ImportCategoryDefinitionsResult {
@@ -185,10 +192,19 @@ export async function initializeDatabase(db: SQLiteDatabase) {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS budget_settings (
+      scope TEXT NOT NULL,
+      month_key TEXT NOT NULL DEFAULT '',
+      amount REAL NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_expenses_month_key ON expenses(month_key);
     CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(date);
     CREATE INDEX IF NOT EXISTS idx_categories_sort_order ON categories(sort_order);
     CREATE INDEX IF NOT EXISTS idx_subcategories_category_sort ON subcategories(category_id, sort_order);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_budget_settings_scope_month
+    ON budget_settings(scope, month_key);
   `);
 
   const categories = await getAllCategoryRows(db);
@@ -228,6 +244,52 @@ export async function exportAllExpenses(db: SQLiteDatabase) {
 
 export async function exportAllCategories(db: SQLiteDatabase) {
   return getAllCategories(db);
+}
+
+export async function getBudgetSettings(db: SQLiteDatabase): Promise<BudgetSettings> {
+  const rows = await db.getAllAsync<BudgetSettingRow>(
+    `SELECT scope, month_key, amount
+     FROM budget_settings
+     ORDER BY month_key ASC`
+  );
+
+  const monthlyBudgets: Record<string, number> = {};
+  let defaultBudget: number | null = null;
+
+  for (const row of rows) {
+    if (row.scope === 'default') {
+      defaultBudget = row.amount;
+      continue;
+    }
+
+    if (row.month_key) {
+      monthlyBudgets[row.month_key] = row.amount;
+    }
+  }
+
+  return { defaultBudget, monthlyBudgets };
+}
+
+export async function setDefaultBudget(db: SQLiteDatabase, amount: number) {
+  await db.runAsync(
+    `INSERT INTO budget_settings (scope, month_key, amount, updated_at)
+     VALUES ('default', '', ?, ?)
+     ON CONFLICT(scope, month_key) DO UPDATE SET amount = excluded.amount, updated_at = excluded.updated_at`,
+    [amount, new Date().toISOString()]
+  );
+}
+
+export async function setMonthlyBudgetOverride(db: SQLiteDatabase, monthKey: string, amount: number) {
+  await db.runAsync(
+    `INSERT INTO budget_settings (scope, month_key, amount, updated_at)
+     VALUES ('month', ?, ?, ?)
+     ON CONFLICT(scope, month_key) DO UPDATE SET amount = excluded.amount, updated_at = excluded.updated_at`,
+    [monthKey, amount, new Date().toISOString()]
+  );
+}
+
+export async function clearMonthlyBudgetOverride(db: SQLiteDatabase, monthKey: string) {
+  await db.runAsync(`DELETE FROM budget_settings WHERE scope = 'month' AND month_key = ?`, [monthKey]);
 }
 
 export async function insertExpense(db: SQLiteDatabase, draft: ExpenseDraft) {
