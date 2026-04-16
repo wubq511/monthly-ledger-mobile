@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
-import { SQLiteProvider, useSQLiteContext } from 'expo-sqlite';
+import { SQLiteProvider } from 'expo-sqlite';
 import { useFonts } from 'expo-font';
 import {
   SpaceGrotesk_400Regular,
@@ -24,18 +24,14 @@ import { BudgetMeter, BudgetMonthStatusList, OverspendRankingList } from './src/
 import { MonthlyLineChart } from './src/components/Charts';
 import { ExpenseForm } from './src/components/ExpenseForm';
 import { CategoryMonthRankingCard, CategoryRankingList } from './src/components/RankingLists';
-import { getBudgetSettings, initializeDatabase } from './src/lib/database';
+import { initializeDatabase } from './src/lib/database';
 import { formatMonthLabel, formatShortMonthLabel, getCurrentMonthKey, shiftMonth } from './src/lib/date';
 import { formatCurrency } from './src/lib/format';
 import { buildLedgerSummary, type LedgerSummary } from './src/lib/ledgerSummary';
+import { useBudgetSettings } from './src/hooks/useBudgetSettings';
 import { useCategoryData } from './src/hooks/useCategoryData';
 import { useLedgerData } from './src/hooks/useLedgerData';
-import type { BudgetSettings, ExpenseDraft, ExpenseEntry, TabKey } from './src/types/ledger';
-
-const EMPTY_BUDGET_SETTINGS: BudgetSettings = {
-  defaultBudget: null,
-  monthlyBudgets: {},
-};
+import type { ExpenseDraft, ExpenseEntry, TabKey } from './src/types/ledger';
 
 export default function App() {
   const [fontsLoaded] = useFonts({
@@ -63,7 +59,6 @@ export default function App() {
 
 function LedgerApp() {
   const insets = useSafeAreaInsets();
-  const db = useSQLiteContext();
   const { entries, loading: entriesLoading, error: entriesError, addEntry, removeEntry, refresh } = useLedgerData();
   const {
     categories,
@@ -81,16 +76,28 @@ function LedgerApp() {
     getCategoryUsageSummary,
     getSubcategoryUsageSummary,
   } = useCategoryData();
+  const {
+    settings: budgetSettings,
+    loading: budgetLoading,
+    error: budgetError,
+    refresh: refreshBudgetSettings,
+    setDefaultBudget,
+    setMonthlyBudgetOverride,
+    clearMonthlyBudgetOverride,
+  } = useBudgetSettings();
   const [activeTab, setActiveTab] = useState<TabKey>('overview');
   const [selectedMonth, setSelectedMonth] = useState(getCurrentMonthKey());
   const [selectedRankingCategory, setSelectedRankingCategory] = useState<string | null>(null);
-  const [budgetSettings, setBudgetSettings] = useState<BudgetSettings | null>(null);
 
-  const loading = entriesLoading || categoriesLoading || budgetSettings === null;
-  const error = entriesError ?? categoriesError;
-  const summary = budgetSettings
-    ? buildLedgerSummary(entries, categories, selectedMonth, budgetSettings, formatShortMonthLabel)
-    : null;
+  const loading = entriesLoading || categoriesLoading || budgetLoading;
+  const error = entriesError ?? categoriesError ?? budgetError;
+  const summary = buildLedgerSummary(
+    entries,
+    categories,
+    selectedMonth,
+    budgetSettings,
+    formatShortMonthLabel
+  );
   const rankingCategories = summary ? Object.keys(summary.categoryMonthRanking) : [];
   const rankingCategoryKey = rankingCategories.join('|');
   const hasSelectedRankingCategory = selectedRankingCategory
@@ -114,29 +121,7 @@ function LedgerApp() {
     }
   }, [hasSelectedRankingCategory, rankingCategoryKey, selectedRankingCategory, summary]);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    setBudgetSettings(null);
-
-    void getBudgetSettings(db)
-      .then((settings) => {
-        if (!cancelled) {
-          setBudgetSettings(settings);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setBudgetSettings(EMPTY_BUDGET_SETTINGS);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [db]);
-
-  if (loading || !summary) {
+  if (loading) {
     return <LoadingScreen />;
   }
 
@@ -166,6 +151,10 @@ function LedgerApp() {
     );
   };
 
+  const handleImported = async () => {
+    await Promise.all([refresh(), refreshCategories()]);
+  };
+
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <StatusBar style="dark" />
@@ -188,21 +177,14 @@ function LedgerApp() {
             categoriesLoading={categoriesLoading}
             onSubmit={handleAddExpense}
             onCompleteSequence={() => setActiveTab('overview')}
-            onImported={async () => {
-              setBudgetSettings(null);
-
-              await Promise.all([
-                refresh(),
-                refreshCategories(),
-                getBudgetSettings(db)
-                  .then((settings) => {
-                    setBudgetSettings(settings);
-                  })
-                  .catch(() => {
-                    setBudgetSettings(EMPTY_BUDGET_SETTINGS);
-                  }),
-              ]);
-            }}
+            onImported={handleImported}
+            budgetSettings={budgetSettings}
+            budgetLoading={budgetLoading}
+            budgetError={budgetError}
+            onRefreshBudgetSettings={refreshBudgetSettings}
+            onSetDefaultBudget={setDefaultBudget}
+            onSetMonthlyBudgetOverride={setMonthlyBudgetOverride}
+            onClearMonthlyBudgetOverride={clearMonthlyBudgetOverride}
             onCreateCategory={createCategory}
             onRenameCategory={renameCategory}
             onDeleteCategory={deleteCategory}

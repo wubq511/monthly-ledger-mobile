@@ -608,7 +608,17 @@ export async function mergeCategoryDefinitions(
   db: SQLiteDatabase,
   importedCategories: CategoryRecord[]
 ): Promise<ImportCategoryDefinitionsResult> {
-  return db.withTransactionAsync(async () => mergeCategoryDefinitionsContents(db, importedCategories));
+  let result: ImportCategoryDefinitionsResult | null = null;
+
+  await db.withTransactionAsync(async () => {
+    result = await mergeCategoryDefinitionsContents(db, importedCategories);
+  });
+
+  if (result === null) {
+    throw new Error('transaction completed without returning a result');
+  }
+
+  return result;
 }
 
 async function importExpensesMergeContents(
@@ -640,7 +650,17 @@ export async function importExpensesMerge(
   db: SQLiteDatabase,
   entries: ExpenseEntry[]
 ): Promise<ImportExpensesResult> {
-  return db.withTransactionAsync(async () => importExpensesMergeContents(db, entries));
+  let result: ImportExpensesResult | null = null;
+
+  await db.withTransactionAsync(async () => {
+    result = await importExpensesMergeContents(db, entries);
+  });
+
+  if (result === null) {
+    throw new Error('transaction completed without returning a result');
+  }
+
+  return result;
 }
 
 async function replaceAllExpensesContents(
@@ -670,14 +690,26 @@ export async function replaceAllExpenses(
   db: SQLiteDatabase,
   entries: ExpenseEntry[]
 ): Promise<ImportExpensesResult> {
-  return db.withTransactionAsync(async () => replaceAllExpensesContents(db, entries));
+  let result: ImportExpensesResult | null = null;
+
+  await db.withTransactionAsync(async () => {
+    result = await replaceAllExpensesContents(db, entries);
+  });
+
+  if (result === null) {
+    throw new Error('transaction completed without returning a result');
+  }
+
+  return result;
 }
 
 export async function importBackupMerge(
   db: SQLiteDatabase,
   backup: ParsedLedgerBackupFile
 ): Promise<ImportBackupMergeResult> {
-  return db.withTransactionAsync(async () => {
+  let result: ImportBackupMergeResult | null = null;
+
+  await db.withTransactionAsync(async () => {
     const categoryResult = await mergeCategoryDefinitionsContents(db, backup.categories);
     const expenseResult = await importExpensesMergeContents(db, backup.entries);
 
@@ -685,19 +717,27 @@ export async function importBackupMerge(
       await replaceBudgetSettingsContents(db, backup.budgetSettings);
     }
 
-    return {
+    result = {
       categoryResult,
       expenseResult,
       budgetSettingsApplied: backup.hasBudgetSettings,
     };
   });
+
+  if (result === null) {
+    throw new Error('transaction completed without returning a result');
+  }
+
+  return result;
 }
 
 export async function restoreBackupReplace(
   db: SQLiteDatabase,
   backup: ParsedLedgerBackupFile
 ): Promise<ReplaceBackupResult> {
-  return db.withTransactionAsync(async () => {
+  let result: ReplaceBackupResult | null = null;
+
+  await db.withTransactionAsync(async () => {
     await replaceAllCategoryDefinitionsContents(db, backup.categories);
     const expenseResult = await replaceAllExpensesContents(db, backup.entries);
 
@@ -705,11 +745,17 @@ export async function restoreBackupReplace(
       await replaceBudgetSettingsContents(db, backup.budgetSettings);
     }
 
-    return {
+    result = {
       expenseResult,
       budgetSettingsApplied: backup.hasBudgetSettings,
     };
   });
+
+  if (result === null) {
+    throw new Error('transaction completed without returning a result');
+  }
+
+  return result;
 }
 
 async function insertImportedExpense(db: SQLiteDatabase, entry: ExpenseEntry) {

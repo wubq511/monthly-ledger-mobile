@@ -18,11 +18,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BackupActions } from './BackupActions';
 import { BudgetSettingsCard } from './BudgetSettingsCard';
 import { CategoryManagerModal } from './CategoryManagerModal';
-import { useBudgetSettings } from '../hooks/useBudgetSettings';
 import { parseBudgetAmountInput } from '../lib/budgetInput';
 import { formatMonthLabel } from '../lib/date';
 import { getKeyboardInset } from '../lib/expenseFormLayout';
 import type {
+  BudgetSettings,
   CategoryRecord,
   CategoryUsageSummary,
   SubcategoryUsageSummary,
@@ -37,8 +37,15 @@ interface LedgerManagementHubModalProps {
   monthKey: string;
   categories: CategoryRecord[];
   categoriesLoading: boolean;
+  budgetSettings: BudgetSettings;
+  budgetLoading: boolean;
+  budgetError: string | null;
   onClose: () => void;
   onImported: () => Promise<void>;
+  onRefreshBudgetSettings: () => Promise<void>;
+  onSetDefaultBudget: (amount: number) => Promise<void>;
+  onSetMonthlyBudgetOverride: (monthKey: string, amount: number) => Promise<void>;
+  onClearMonthlyBudgetOverride: (monthKey: string) => Promise<void>;
   onCreateCategory: (name: string) => Promise<void>;
   onRenameCategory: (id: string, name: string) => Promise<void>;
   onDeleteCategory: (id: string) => Promise<void>;
@@ -60,8 +67,15 @@ export function LedgerManagementHubModal({
   monthKey,
   categories,
   categoriesLoading,
+  budgetSettings,
+  budgetLoading,
+  budgetError,
   onClose,
   onImported,
+  onRefreshBudgetSettings,
+  onSetDefaultBudget,
+  onSetMonthlyBudgetOverride,
+  onClearMonthlyBudgetOverride,
   onCreateCategory,
   onRenameCategory,
   onDeleteCategory,
@@ -75,15 +89,6 @@ export function LedgerManagementHubModal({
 }: LedgerManagementHubModalProps) {
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
-  const {
-    settings,
-    loading: budgetLoading,
-    error: budgetError,
-    refresh: refreshBudgetSettings,
-    setDefaultBudget,
-    setMonthlyBudgetOverride,
-    clearMonthlyBudgetOverride,
-  } = useBudgetSettings();
   const [categoryModalVisible, setCategoryModalVisible] = useState(false);
   const [editor, setEditor] = useState<BudgetEditorState | null>(null);
   const [editorValue, setEditorValue] = useState('');
@@ -99,10 +104,7 @@ export function LedgerManagementHubModal({
       setBusyLabel(null);
       setKeyboardInset(0);
       setEditorDockHeight(0);
-      return;
     }
-
-    void refreshBudgetSettings();
   }, [visible]);
 
   useEffect(() => {
@@ -143,18 +145,18 @@ export function LedgerManagementHubModal({
     setEditor({
       mode: 'default',
       title: '修改默认月预算',
-      initialValue: settings.defaultBudget === null ? '' : String(settings.defaultBudget),
+      initialValue: budgetSettings.defaultBudget === null ? '' : String(budgetSettings.defaultBudget),
       confirmLabel: '正在保存默认预算...',
     });
-    setEditorValue(settings.defaultBudget === null ? '' : String(settings.defaultBudget));
+    setEditorValue(budgetSettings.defaultBudget === null ? '' : String(budgetSettings.defaultBudget));
   };
 
   const openMonthBudgetEditor = () => {
     const initialValue =
-      settings.monthlyBudgets[monthKey] !== undefined
-        ? String(settings.monthlyBudgets[monthKey])
-        : settings.defaultBudget !== null
-          ? String(settings.defaultBudget)
+      budgetSettings.monthlyBudgets[monthKey] !== undefined
+        ? String(budgetSettings.monthlyBudgets[monthKey])
+        : budgetSettings.defaultBudget !== null
+          ? String(budgetSettings.defaultBudget)
           : '';
 
     setEditor({
@@ -183,12 +185,10 @@ export function LedgerManagementHubModal({
 
     try {
       if (editor.mode === 'default') {
-        await setDefaultBudget(amount);
+        await onSetDefaultBudget(amount);
       } else {
-        await setMonthlyBudgetOverride(editor.monthKey, amount);
+        await onSetMonthlyBudgetOverride(editor.monthKey, amount);
       }
-
-      await onImported();
 
       setEditor(null);
       setEditorValue('');
@@ -213,8 +213,7 @@ export function LedgerManagementHubModal({
               setBusyLabel('正在恢复默认预算...');
 
               try {
-                await clearMonthlyBudgetOverride(monthKey);
-                await onImported();
+                await onClearMonthlyBudgetOverride(monthKey);
               } catch (error) {
                 Alert.alert('恢复失败', getErrorMessage(error, '恢复默认预算失败'));
               } finally {
@@ -228,7 +227,7 @@ export function LedgerManagementHubModal({
   };
 
   const handleImported = async () => {
-    await Promise.all([refreshBudgetSettings(), onImported()]);
+    await Promise.all([onImported(), onRefreshBudgetSettings()]);
   };
 
   const editorBottomOffset = keyboardInset > 0 ? keyboardInset + 12 : Math.max(insets.bottom, 20) + 12;
@@ -267,7 +266,7 @@ export function LedgerManagementHubModal({
               showsVerticalScrollIndicator={false}>
               <BudgetSettingsCard
                 monthKey={monthKey}
-                settings={settings}
+                settings={budgetSettings}
                 loading={budgetLoading}
                 error={budgetError}
                 statusText={busyLabel}

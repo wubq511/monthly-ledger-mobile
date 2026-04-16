@@ -24,6 +24,7 @@ import { getCurrentMonthKey, getPreviousMonthKey, isValidMonthInput } from '../l
 import { getExpenseFormLayoutMetrics, getKeyboardInset } from '../lib/expenseFormLayout';
 import { getNextCategoryStep } from '../lib/expenseFormFlow';
 import type {
+  BudgetSettings,
   CategoryRecord,
   CategoryUsageSummary,
   ExpenseDraft,
@@ -36,6 +37,13 @@ interface ExpenseFormProps {
   onSubmit: (draft: ExpenseDraft) => Promise<void>;
   onCompleteSequence: () => void;
   onImported: () => Promise<void>;
+  budgetSettings: BudgetSettings;
+  budgetLoading: boolean;
+  budgetError: string | null;
+  onRefreshBudgetSettings: () => Promise<void>;
+  onSetDefaultBudget: (amount: number) => Promise<void>;
+  onSetMonthlyBudgetOverride: (monthKey: string, amount: number) => Promise<void>;
+  onClearMonthlyBudgetOverride: (monthKey: string) => Promise<void>;
   onCreateCategory: (name: string) => Promise<void>;
   onRenameCategory: (id: string, name: string) => Promise<void>;
   onDeleteCategory: (id: string) => Promise<void>;
@@ -54,6 +62,13 @@ export function ExpenseForm({
   onSubmit,
   onCompleteSequence,
   onImported,
+  budgetSettings,
+  budgetLoading,
+  budgetError,
+  onRefreshBudgetSettings,
+  onSetDefaultBudget,
+  onSetMonthlyBudgetOverride,
+  onClearMonthlyBudgetOverride,
   onCreateCategory,
   onRenameCategory,
   onDeleteCategory,
@@ -351,8 +366,15 @@ export function ExpenseForm({
         monthKey={monthKey}
         categories={categories}
         categoriesLoading={categoriesLoading}
+        budgetSettings={budgetSettings}
+        budgetLoading={budgetLoading}
+        budgetError={budgetError}
         onClose={() => setManagementHubVisible(false)}
         onImported={onImported}
+        onRefreshBudgetSettings={onRefreshBudgetSettings}
+        onSetDefaultBudget={onSetDefaultBudget}
+        onSetMonthlyBudgetOverride={onSetMonthlyBudgetOverride}
+        onClearMonthlyBudgetOverride={onClearMonthlyBudgetOverride}
         onCreateCategory={onCreateCategory}
         onRenameCategory={onRenameCategory}
         onDeleteCategory={onDeleteCategory}
