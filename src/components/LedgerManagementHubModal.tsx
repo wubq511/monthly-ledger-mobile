@@ -188,6 +188,8 @@ export function LedgerManagementHubModal({
         await setMonthlyBudgetOverride(editor.monthKey, amount);
       }
 
+      await onImported();
+
       setEditor(null);
       setEditorValue('');
     } catch (error) {
@@ -212,6 +214,7 @@ export function LedgerManagementHubModal({
 
               try {
                 await clearMonthlyBudgetOverride(monthKey);
+                await onImported();
               } catch (error) {
                 Alert.alert('恢复失败', getErrorMessage(error, '恢复默认预算失败'));
               } finally {
@@ -290,6 +293,21 @@ export function LedgerManagementHubModal({
             </ScrollView>
           </View>
         </View>
+
+        {editor ? (
+          <Pressable
+            style={styles.editorBackdrop}
+            disabled={Boolean(busyLabel)}
+            onPress={() => {
+              if (busyLabel) {
+                return;
+              }
+
+              setEditor(null);
+              setEditorValue('');
+            }}
+          />
+        ) : null}
 
         {editor ? (
           <View style={[styles.editorDock, { bottom: editorBottomOffset }]} pointerEvents="box-none">
@@ -468,6 +486,12 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: 16,
     right: 16,
+    zIndex: 2,
+  },
+  editorBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 1,
+    backgroundColor: 'rgba(22, 17, 14, 0.18)',
   },
   editorSheet: {
     borderRadius: 28,
