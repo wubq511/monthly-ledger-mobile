@@ -75,15 +75,18 @@ class FakeDatabase {
   categories: CategoryRow[];
   subcategories: SubcategoryRow[];
   budgetSettings: BudgetSettingRow[];
+  execStatements: string[];
 
   constructor(rows: ExpenseEntry[]) {
     this.rows = [...rows];
     this.categories = [];
     this.subcategories = [];
     this.budgetSettings = [];
+    this.execStatements = [];
   }
 
-  async execAsync() {
+  async execAsync(sql: string) {
+    this.execStatements.push(sql);
     return;
   }
 
@@ -557,6 +560,21 @@ describe('database category persistence', () => {
 });
 
 describe('database budget persistence', () => {
+  it('includes the budget settings schema in initializeDatabase SQL', async () => {
+    const db = new FakeDatabase([]);
+    const initializeDatabase = requireDatabaseApi('initializeDatabase');
+
+    await initializeDatabase(db as never);
+
+    const combinedSql = db.execStatements.join('\n');
+
+    expect(combinedSql).toContain('CREATE TABLE IF NOT EXISTS budget_settings');
+    expect(combinedSql).toContain('scope TEXT NOT NULL');
+    expect(combinedSql).toContain('month_key TEXT NOT NULL DEFAULT');
+    expect(combinedSql).toContain('CREATE UNIQUE INDEX IF NOT EXISTS idx_budget_settings_scope_month');
+    expect(combinedSql).toContain('ON budget_settings(scope, month_key)');
+  });
+
   it('stores and reads the default budget and monthly overrides', async () => {
     const db = new FakeDatabase([]);
     const initializeDatabase = requireDatabaseApi('initializeDatabase');
@@ -572,6 +590,40 @@ describe('database budget persistence', () => {
       defaultBudget: 3200,
       monthlyBudgets: {
         '2026-04': 2800,
+      },
+    });
+  });
+
+  it('overwrites the default budget on repeated calls', async () => {
+    const db = new FakeDatabase([]);
+    const initializeDatabase = requireDatabaseApi('initializeDatabase');
+    const setDefaultBudget = requireDatabaseApi('setDefaultBudget');
+    const getBudgetSettings = requireDatabaseApi('getBudgetSettings');
+
+    await initializeDatabase(db as never);
+    await setDefaultBudget(db as never, 3200);
+    await setDefaultBudget(db as never, 4100);
+
+    await expect(getBudgetSettings(db as never)).resolves.toEqual({
+      defaultBudget: 4100,
+      monthlyBudgets: {},
+    });
+  });
+
+  it('overwrites a monthly override on repeated calls', async () => {
+    const db = new FakeDatabase([]);
+    const initializeDatabase = requireDatabaseApi('initializeDatabase');
+    const setMonthlyBudgetOverride = requireDatabaseApi('setMonthlyBudgetOverride');
+    const getBudgetSettings = requireDatabaseApi('getBudgetSettings');
+
+    await initializeDatabase(db as never);
+    await setMonthlyBudgetOverride(db as never, '2026-04', 2800);
+    await setMonthlyBudgetOverride(db as never, '2026-04', 2950);
+
+    await expect(getBudgetSettings(db as never)).resolves.toEqual({
+      defaultBudget: null,
+      monthlyBudgets: {
+        '2026-04': 2950,
       },
     });
   });
