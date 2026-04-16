@@ -292,6 +292,20 @@ export async function clearMonthlyBudgetOverride(db: SQLiteDatabase, monthKey: s
   await db.runAsync(`DELETE FROM budget_settings WHERE scope = 'month' AND month_key = ?`, [monthKey]);
 }
 
+export async function replaceBudgetSettings(db: SQLiteDatabase, settings: BudgetSettings) {
+  await db.withTransactionAsync(async () => {
+    await db.runAsync('DELETE FROM budget_settings');
+
+    if (settings.defaultBudget !== null) {
+      await setDefaultBudget(db, settings.defaultBudget);
+    }
+
+    for (const [monthKey, amount] of Object.entries(settings.monthlyBudgets)) {
+      await setMonthlyBudgetOverride(db, monthKey, amount);
+    }
+  });
+}
+
 export async function insertExpense(db: SQLiteDatabase, draft: ExpenseDraft) {
   const id = createId();
   const createdAt = new Date().toISOString();

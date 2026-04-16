@@ -24,6 +24,7 @@ export interface LedgerBackupFile {
   exportedAt: string;
   entries: ExpenseEntry[];
   categories: CategoryRecord[];
+  budgetSettings: BudgetSettings;
 }
 
 export interface ImportExpensesResult {

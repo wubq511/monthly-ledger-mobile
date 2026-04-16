@@ -62,6 +62,10 @@ interface DatabaseApi {
   setDefaultBudget: (db: never, amount: number) => Promise<void>;
   setMonthlyBudgetOverride: (db: never, monthKey: string, amount: number) => Promise<void>;
   clearMonthlyBudgetOverride: (db: never, monthKey: string) => Promise<void>;
+  replaceBudgetSettings: (
+    db: never,
+    settings: { defaultBudget: number | null; monthlyBudgets: Record<string, number> }
+  ) => Promise<void>;
 }
 
 function requireDatabaseApi<K extends keyof DatabaseApi>(key: K): DatabaseApi[K] {
@@ -169,6 +173,11 @@ class FakeDatabase {
 
     if (normalized === 'DELETE FROM EXPENSES') {
       this.rows = [];
+      return;
+    }
+
+    if (normalized === 'DELETE FROM BUDGET_SETTINGS') {
+      this.budgetSettings = [];
       return;
     }
 
@@ -671,6 +680,33 @@ describe('database budget persistence', () => {
     await expect(getBudgetSettings(db as never)).resolves.toEqual({
       defaultBudget: 2600,
       monthlyBudgets: {},
+    });
+  });
+
+  it('replaces all budget settings through a single restore path', async () => {
+    const db = new FakeDatabase([]);
+    const initializeDatabase = requireDatabaseApi('initializeDatabase');
+    const setDefaultBudget = requireDatabaseApi('setDefaultBudget');
+    const setMonthlyBudgetOverride = requireDatabaseApi('setMonthlyBudgetOverride');
+    const replaceBudgetSettings = requireDatabaseApi('replaceBudgetSettings');
+    const getBudgetSettings = requireDatabaseApi('getBudgetSettings');
+
+    await initializeDatabase(db as never);
+    await setDefaultBudget(db as never, 2600);
+    await setMonthlyBudgetOverride(db as never, '2026-03', 2400);
+
+    await replaceBudgetSettings(db as never, {
+      defaultBudget: 3200,
+      monthlyBudgets: {
+        '2026-04': 3000,
+      },
+    });
+
+    await expect(getBudgetSettings(db as never)).resolves.toEqual({
+      defaultBudget: 3200,
+      monthlyBudgets: {
+        '2026-04': 3000,
+      },
     });
   });
 });

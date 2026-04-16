@@ -10,12 +10,14 @@ import { buildBackupPayload, createBackupFileName, parseBackupJson } from '../li
 import {
   exportAllCategories,
   exportAllExpenses,
+  getBudgetSettings,
   mergeCategoryDefinitions,
   importExpensesMerge,
   replaceAllCategoryDefinitions,
   replaceAllExpenses,
+  replaceBudgetSettings,
 } from '../lib/database';
-import type { CategoryRecord, ExpenseEntry } from '../types/ledger';
+import type { BudgetSettings, CategoryRecord, ExpenseEntry } from '../types/ledger';
 
 interface BackupActionsProps {
   onImported: () => Promise<void>;
@@ -42,12 +44,17 @@ export function BackupActions({ onImported }: BackupActionsProps) {
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const busy = busyLabel !== null;
 
-  const runMergeImport = async (entries: ExpenseEntry[], categories: CategoryRecord[]) => {
+  const runMergeImport = async (
+    entries: ExpenseEntry[],
+    categories: CategoryRecord[],
+    budgetSettings: BudgetSettings
+  ) => {
     setBusyLabel('正在合并导入...');
 
     try {
       const categoryResult = await mergeCategoryDefinitions(db, categories);
       const result = await importExpensesMerge(db, entries);
+      await replaceBudgetSettings(db, budgetSettings);
       await onImported();
       Alert.alert(
         '导入完成',
@@ -65,12 +72,17 @@ export function BackupActions({ onImported }: BackupActionsProps) {
     }
   };
 
-  const runReplaceRestore = async (entries: ExpenseEntry[], categories: CategoryRecord[]) => {
+  const runReplaceRestore = async (
+    entries: ExpenseEntry[],
+    categories: CategoryRecord[],
+    budgetSettings: BudgetSettings
+  ) => {
     setBusyLabel('正在覆盖恢复...');
 
     try {
       await replaceAllCategoryDefinitions(db, categories);
       const result = await replaceAllExpenses(db, entries);
+      await replaceBudgetSettings(db, budgetSettings);
       await onImported();
       Alert.alert('恢复完成', formatReplaceSummary(result.importedCount, categories.length));
     } catch (error) {
@@ -84,11 +96,16 @@ export function BackupActions({ onImported }: BackupActionsProps) {
     setBusyLabel('正在生成备份...');
 
     try {
-      const [entries, categories] = await Promise.all([exportAllExpenses(db), exportAllCategories(db)]);
+      const [entries, categories, budgetSettings] = await Promise.all([
+        exportAllExpenses(db),
+        exportAllCategories(db),
+        getBudgetSettings(db),
+      ]);
       const exportedAt = new Date().toISOString();
       const payload = buildBackupPayload(
         entries,
         categories,
+        budgetSettings,
         Constants.expoConfig?.version ?? 'unknown',
         exportedAt
       );
@@ -138,30 +155,30 @@ export function BackupActions({ onImported }: BackupActionsProps) {
         '选择恢复方式',
         `检测到 ${backup.entries.length} 条记录和 ${backup.categories.length} 个大类，请选择恢复方式。`,
         [
-        { text: '取消', style: 'cancel' },
-        {
-          text: '合并导入',
-          onPress: () => {
-            void runMergeImport(backup.entries, backup.categories);
+          { text: '取消', style: 'cancel' },
+          {
+            text: '合并导入',
+            onPress: () => {
+              void runMergeImport(backup.entries, backup.categories, backup.budgetSettings);
+            },
           },
-        },
-        {
-          text: '覆盖恢复',
-          style: 'destructive',
-          onPress: () => {
-            Alert.alert('覆盖当前账本？', '当前账本和分类配置会被清空，然后恢复备份中的全部内容。', [
-              { text: '取消', style: 'cancel' },
-              {
-                text: '确认覆盖',
-                style: 'destructive',
-                onPress: () => {
-                  void runReplaceRestore(backup.entries, backup.categories);
+          {
+            text: '覆盖恢复',
+            style: 'destructive',
+            onPress: () => {
+              Alert.alert('覆盖当前账本？', '当前账本和分类配置会被清空，然后恢复备份中的全部内容。', [
+                { text: '取消', style: 'cancel' },
+                {
+                  text: '确认覆盖',
+                  style: 'destructive',
+                  onPress: () => {
+                    void runReplaceRestore(backup.entries, backup.categories, backup.budgetSettings);
+                  },
                 },
-              },
-            ]);
+              ]);
+            },
           },
-        },
-      ]
+        ]
       );
     } catch (error) {
       Alert.alert('导入失败', getErrorMessage(error, '导入备份失败'));
