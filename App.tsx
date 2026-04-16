@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
-import { SQLiteProvider } from 'expo-sqlite';
+import { SQLiteProvider, useSQLiteContext } from 'expo-sqlite';
 import { useFonts } from 'expo-font';
 import {
   SpaceGrotesk_400Regular,
@@ -24,13 +24,18 @@ import { BudgetMeter, BudgetMonthStatusList, OverspendRankingList } from './src/
 import { MonthlyLineChart } from './src/components/Charts';
 import { ExpenseForm } from './src/components/ExpenseForm';
 import { CategoryMonthRankingCard, CategoryRankingList } from './src/components/RankingLists';
-import { initializeDatabase } from './src/lib/database';
+import { getBudgetSettings, initializeDatabase } from './src/lib/database';
 import { formatMonthLabel, formatShortMonthLabel, getCurrentMonthKey, shiftMonth } from './src/lib/date';
 import { formatCurrency } from './src/lib/format';
-import { buildLedgerSummary, MONTHLY_BUDGET_LIMIT, type LedgerSummary } from './src/lib/ledgerSummary';
+import { buildLedgerSummary, type LedgerSummary } from './src/lib/ledgerSummary';
 import { useCategoryData } from './src/hooks/useCategoryData';
 import { useLedgerData } from './src/hooks/useLedgerData';
-import type { ExpenseDraft, ExpenseEntry, TabKey } from './src/types/ledger';
+import type { BudgetSettings, ExpenseDraft, ExpenseEntry, TabKey } from './src/types/ledger';
+
+const EMPTY_BUDGET_SETTINGS: BudgetSettings = {
+  defaultBudget: null,
+  monthlyBudgets: {},
+};
 
 export default function App() {
   const [fontsLoaded] = useFonts({
@@ -58,6 +63,7 @@ export default function App() {
 
 function LedgerApp() {
   const insets = useSafeAreaInsets();
+  const db = useSQLiteContext();
   const { entries, loading: entriesLoading, error: entriesError, addEntry, removeEntry, refresh } = useLedgerData();
   const {
     categories,
@@ -78,10 +84,17 @@ function LedgerApp() {
   const [activeTab, setActiveTab] = useState<TabKey>('overview');
   const [selectedMonth, setSelectedMonth] = useState(getCurrentMonthKey());
   const [selectedRankingCategory, setSelectedRankingCategory] = useState<string | null>(null);
+  const [budgetSettings, setBudgetSettings] = useState<BudgetSettings>(EMPTY_BUDGET_SETTINGS);
 
   const loading = entriesLoading || categoriesLoading;
   const error = entriesError ?? categoriesError;
-  const summary = buildLedgerSummary(entries, categories, selectedMonth, formatShortMonthLabel);
+  const summary = buildLedgerSummary(
+    entries,
+    categories,
+    selectedMonth,
+    budgetSettings,
+    formatShortMonthLabel
+  );
   const rankingCategories = Object.keys(summary.categoryMonthRanking);
   const rankingCategoryKey = rankingCategories.join('|');
   const hasSelectedRankingCategory = selectedRankingCategory
@@ -100,6 +113,26 @@ function LedgerApp() {
       setSelectedRankingCategory(summary.defaultCategoryRankingName);
     }
   }, [hasSelectedRankingCategory, rankingCategoryKey, selectedRankingCategory, summary.defaultCategoryRankingName]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void getBudgetSettings(db)
+      .then((settings) => {
+        if (!cancelled) {
+          setBudgetSettings(settings);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setBudgetSettings(EMPTY_BUDGET_SETTINGS);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [db]);
 
   const handleAddExpense = async (draft: ExpenseDraft) => {
     await addEntry(draft);
@@ -238,7 +271,7 @@ function OverviewScreen({
         <MonthSwitcher monthKey={selectedMonth} onChange={onMonthChange} light />
         <Text style={styles.heroTotal}>{formatCurrency(summary.selectedTotal)}</Text>
 
-        <BudgetMeter budget={summary.selectedBudget} budgetLimit={MONTHLY_BUDGET_LIMIT} light />
+        <BudgetMeter budget={summary.selectedBudget} light />
 
         <View style={styles.metricGrid}>
           <MetricChip label="本月预算状态" value={budgetStatus} />
@@ -350,7 +383,7 @@ function TrendsScreen({
       <View style={styles.section}>
         <MonthlyLineChart
           data={summary.monthlyTrend}
-          budgetLimit={MONTHLY_BUDGET_LIMIT}
+          budgetLimit={summary.selectedBudget.budgetLimit}
           selectedMonth={selectedMonth}
           onChangeMonth={onMonthChange}
         />

@@ -1,6 +1,6 @@
 import { getCategoryColor } from '../constants/categories';
 import { buildTrendWindowMonths } from './trendWindow';
-import type { CategoryRecord, ExpenseEntry } from '../types/ledger';
+import type { BudgetSettings, CategoryRecord, ExpenseEntry } from '../types/ledger';
 
 export interface CategoryTotal {
   name: string;
@@ -17,6 +17,7 @@ export interface MonthlyTrendPoint {
 
 export interface BudgetSnapshot {
   total: number;
+  budgetLimit: number;
   remaining: number;
   overspend: number;
   utilizationRate: number;
@@ -59,13 +60,14 @@ export interface LedgerSummary {
 
 export const MONTHLY_BUDGET_LIMIT = 2000;
 
-function buildBudgetSnapshot(total: number): BudgetSnapshot {
-  const overspend = Math.max(total - MONTHLY_BUDGET_LIMIT, 0);
-  const remaining = Math.max(MONTHLY_BUDGET_LIMIT - total, 0);
-  const utilizationRate = MONTHLY_BUDGET_LIMIT > 0 ? total / MONTHLY_BUDGET_LIMIT : 0;
+function buildBudgetSnapshot(total: number, budgetLimit: number): BudgetSnapshot {
+  const overspend = Math.max(total - budgetLimit, 0);
+  const remaining = Math.max(budgetLimit - total, 0);
+  const utilizationRate = budgetLimit > 0 ? total / budgetLimit : 0;
 
   return {
     total,
+    budgetLimit,
     remaining,
     overspend,
     utilizationRate,
@@ -131,12 +133,29 @@ function buildOrderedCategoryNames(entries: ExpenseEntry[], categories: Category
   return [...names, ...historicalOnlyNames];
 }
 
+function resolveMonthBudgetLimit(budgetSettings: BudgetSettings, monthKey: string) {
+  if (Object.prototype.hasOwnProperty.call(budgetSettings.monthlyBudgets, monthKey)) {
+    return budgetSettings.monthlyBudgets[monthKey];
+  }
+
+  if (budgetSettings.defaultBudget !== null) {
+    return budgetSettings.defaultBudget;
+  }
+
+  return MONTHLY_BUDGET_LIMIT;
+}
+
 export function buildLedgerSummary(
   entries: ExpenseEntry[],
   categories: CategoryRecord[],
   selectedMonth: string,
+  budgetSettings: BudgetSettings,
   formatShortMonthLabel: (monthKey: string) => string
 ): LedgerSummary {
+  const resolvedBudgetSettings = budgetSettings ?? {
+    defaultBudget: null,
+    monthlyBudgets: {},
+  };
   const monthlyTotals = new Map<string, number>();
   const monthCategoryTotals = new Map<string, Map<string, number>>();
   const selectedCategoryTotals = new Map<string, number>();
@@ -170,6 +189,7 @@ export function buildLedgerSummary(
   const categoryColors = buildCategoryColors(entries, categories);
   const trackedMonthCount = monthlyTotals.size;
   const monthlyAverage = trackedMonthCount > 0 ? grandTotal / trackedMonthCount : 0;
+  const selectedBudgetLimit = resolveMonthBudgetLimit(resolvedBudgetSettings, selectedMonth);
 
   const selectedMonthRanking = Array.from(selectedCategoryTotals.entries())
     .map(([name, total]) => ({
@@ -181,13 +201,13 @@ export function buildLedgerSummary(
     .sort(sortCategoryTotals);
 
   const categoryTotals = selectedMonthRanking;
-  const selectedBudget = buildBudgetSnapshot(selectedTotal);
+  const selectedBudget = buildBudgetSnapshot(selectedTotal, selectedBudgetLimit);
 
   const monthlyBudgetRows = Array.from(monthlyTotals.entries())
     .map(([monthKey, total]) => ({
       monthKey,
       label: formatShortMonthLabel(monthKey),
-      ...buildBudgetSnapshot(total),
+      ...buildBudgetSnapshot(total, resolveMonthBudgetLimit(resolvedBudgetSettings, monthKey)),
     }))
     .sort(sortBudgetRowsByMonth);
 

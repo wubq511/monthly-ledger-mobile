@@ -2,16 +2,28 @@ import { describe, expect, it } from 'vitest';
 
 import * as ledgerSummary from './ledgerSummary';
 import type { CategoryRecord, ExpenseEntry } from '../types/ledger';
+import type { BudgetSettings } from '../types/ledger';
 
 type BuildLedgerSummary = (
   entries: ExpenseEntry[],
   categories: CategoryRecord[],
   selectedMonth: string,
+  budgetSettings: BudgetSettings,
   formatShortMonthLabel: (monthKey: string) => string
-) => ReturnType<typeof ledgerSummary.buildLedgerSummary>;
+) => any;
 
 const buildLedgerSummary = ledgerSummary.buildLedgerSummary as unknown as BuildLedgerSummary;
 const MONTHLY_BUDGET_LIMIT = ledgerSummary.MONTHLY_BUDGET_LIMIT;
+const emptyBudgetSettings: BudgetSettings = {
+  defaultBudget: null,
+  monthlyBudgets: {},
+};
+const budgetSettings: BudgetSettings = {
+  defaultBudget: 2400,
+  monthlyBudgets: {
+    '2026-03': 1800,
+  },
+};
 
 const categories: CategoryRecord[] = [
   {
@@ -92,55 +104,133 @@ const entries: ExpenseEntry[] = [
 ];
 
 describe('buildLedgerSummary', () => {
-  it('computes month budget snapshots and overall overspend stats', () => {
-    const summary = buildLedgerSummary(entries, categories, '2026-03', (monthKey) => monthKey.slice(5));
+  it('uses the monthly override before the default budget', () => {
+    const summary = buildLedgerSummary(
+      entries,
+      categories,
+      '2026-03',
+      budgetSettings,
+      (monthKey) => monthKey.slice(5)
+    );
 
-    expect(MONTHLY_BUDGET_LIMIT).toBe(2000);
-    expect(summary.trackedMonthCount).toBe(3);
-    expect(summary.totalOverspend).toBe(550);
-    expect(summary.totalRemaining).toBe(1200);
-    expect(summary.netBudgetBalance).toBe(650);
-    expect(summary.averageMonthlyOverspend).toBeCloseTo(550 / 3, 2);
-    expect(summary.overspendMonthCount).toBe(2);
+    expect(summary.selectedBudget.budgetLimit).toBe(1800);
     expect(summary.selectedBudget.remaining).toBe(0);
-    expect(summary.selectedBudget.overspend).toBe(400);
-    expect(summary.selectedBudget.utilizationRate).toBeCloseTo(1.2, 2);
+    expect(summary.selectedBudget.overspend).toBe(600);
+    expect(summary.selectedBudget.utilizationRate).toBeCloseTo(2400 / 1800, 2);
+  });
+
+  it('falls back to the default budget when a month has no override', () => {
+    const summary = buildLedgerSummary(
+      entries,
+      categories,
+      '2026-02',
+      budgetSettings,
+      (monthKey) => monthKey.slice(5)
+    );
+
+    expect(summary.selectedBudget.budgetLimit).toBe(2400);
+    expect(summary.selectedBudget.remaining).toBe(1600);
+    expect(summary.selectedBudget.overspend).toBe(0);
+  });
+
+  it('keeps the existing 2000 fallback when settings are empty', () => {
+    const summary = buildLedgerSummary(
+      entries,
+      categories,
+      '2026-01',
+      emptyBudgetSettings,
+      (monthKey) => monthKey.slice(5)
+    );
+
+    expect(summary.selectedBudget.budgetLimit).toBe(MONTHLY_BUDGET_LIMIT);
+    expect(summary.selectedBudget.remaining).toBe(0);
+    expect(summary.selectedBudget.overspend).toBe(150);
+  });
+
+  it('uses each month own resolved budget when aggregating overspend and remaining totals', () => {
+    const summary = buildLedgerSummary(
+      entries,
+      categories,
+      '2026-03',
+      budgetSettings,
+      (monthKey) => monthKey.slice(5)
+    );
+
+    expect(
+      summary.monthlyBudgetRows.map((row: ledgerSummary.BudgetMonthRow) => ({
+        monthKey: row.monthKey,
+        budgetLimit: row.budgetLimit,
+      }))
+    ).toEqual([
+      { monthKey: '2026-03', budgetLimit: 1800 },
+      { monthKey: '2026-02', budgetLimit: 2400 },
+      { monthKey: '2026-01', budgetLimit: 2400 },
+    ]);
+    expect(summary.totalOverspend).toBe(600);
+    expect(summary.totalRemaining).toBe(1850);
+    expect(summary.netBudgetBalance).toBe(1250);
+    expect(summary.averageMonthlyOverspend).toBe(200);
+    expect(summary.overspendMonthCount).toBe(1);
   });
 
   it('orders selected month category ranking and per-category month ranking', () => {
-    const summary = buildLedgerSummary(entries, categories, '2026-03', (monthKey) => monthKey.slice(5));
+    const summary = buildLedgerSummary(
+      entries,
+      categories,
+      '2026-03',
+      budgetSettings,
+      (monthKey) => monthKey.slice(5)
+    );
 
-    expect(summary.categoryTotals.map((item) => item.name)).toEqual(['饮食', '交通']);
-    expect(summary.selectedMonthRanking.map((item) => item.name)).toEqual(['饮食', '交通']);
-    expect(summary.categoryMonthRanking['饮食'].map((item) => item.monthKey)).toEqual([
+    expect(summary.categoryTotals.map((item: ledgerSummary.CategoryTotal) => item.name)).toEqual([
+      '饮食',
+      '交通',
+    ]);
+    expect(summary.selectedMonthRanking.map((item: ledgerSummary.CategoryTotal) => item.name)).toEqual([
+      '饮食',
+      '交通',
+    ]);
+    expect(summary.categoryMonthRanking['饮食'].map((item: ledgerSummary.CategoryMonthRankItem) => item.monthKey)).toEqual([
       '2026-03',
       '2026-01',
       '2026-02',
     ]);
-    expect(summary.categoryMonthRanking['交通'].map((item) => item.monthKey)).toEqual([
+    expect(summary.categoryMonthRanking['交通'].map((item: ledgerSummary.CategoryMonthRankItem) => item.monthKey)).toEqual([
       '2026-03',
       '2026-02',
     ]);
   });
 
   it('keeps deleted historical categories visible in rankings', () => {
-    const summary = buildLedgerSummary(entries, categories, '2026-01', (monthKey) => monthKey.slice(5));
+    const summary = buildLedgerSummary(
+      entries,
+      categories,
+      '2026-01',
+      budgetSettings,
+      (monthKey) => monthKey.slice(5)
+    );
 
-    expect(summary.selectedMonthRanking.map((item) => item.name)).toEqual(['饮食', '娱乐']);
-    expect(summary.categoryMonthRanking['娱乐'].map((item) => item.monthKey)).toEqual(['2026-01']);
+    expect(summary.selectedMonthRanking.map((item: ledgerSummary.CategoryTotal) => item.name)).toEqual([
+      '饮食',
+      '娱乐',
+    ]);
+    expect(summary.categoryMonthRanking['娱乐'].map((item: ledgerSummary.CategoryMonthRankItem) => item.monthKey)).toEqual([
+      '2026-01',
+    ]);
   });
 
   it('keeps zero-overspend months at zero and supports empty data', () => {
-    const empty = buildLedgerSummary([], categories, '2026-03', (monthKey) => monthKey.slice(5));
-    const february = buildLedgerSummary(entries, categories, '2026-02', (monthKey) => monthKey.slice(5));
+    const empty = buildLedgerSummary([], categories, '2026-03', emptyBudgetSettings, (monthKey) => monthKey.slice(5));
+    const february = buildLedgerSummary(entries, categories, '2026-02', budgetSettings, (monthKey) => monthKey.slice(5));
 
     expect(empty.totalOverspend).toBe(0);
     expect(empty.totalRemaining).toBe(0);
     expect(empty.netBudgetBalance).toBe(0);
     expect(empty.averageMonthlyOverspend).toBe(0);
     expect(empty.selectedMonthRanking).toEqual([]);
+    expect(february.selectedBudget.budgetLimit).toBe(2400);
     expect(february.selectedBudget.overspend).toBe(0);
-    expect(february.selectedBudget.remaining).toBe(MONTHLY_BUDGET_LIMIT - 800);
+    expect(february.selectedBudget.remaining).toBe(1600);
   });
 
   it('returns a negative net budget balance when cumulative overspend exceeds total remaining', () => {
@@ -150,7 +240,7 @@ describe('buildLedgerSummary', () => {
         {
           id: '7',
           monthKey: '2026-04',
-          amount: 3500,
+          amount: 5000,
           category: '其他',
           subcategory: null,
           note: null,
@@ -159,11 +249,12 @@ describe('buildLedgerSummary', () => {
       ],
       categories,
       '2026-04',
+      budgetSettings,
       (monthKey) => monthKey.slice(5)
     );
 
-    expect(overspendHeavy.totalOverspend).toBe(2050);
-    expect(overspendHeavy.totalRemaining).toBe(1200);
-    expect(overspendHeavy.netBudgetBalance).toBe(-850);
+    expect(overspendHeavy.totalOverspend).toBe(3200);
+    expect(overspendHeavy.totalRemaining).toBe(1850);
+    expect(overspendHeavy.netBudgetBalance).toBe(-1350);
   });
 });
