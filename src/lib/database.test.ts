@@ -102,6 +102,7 @@ class FakeDatabase {
   execStatements: string[];
   runStatements: Array<{ sql: string; params: unknown[] }>;
   failOnSqlPrefix: string | null;
+  transactionDepth: number;
 
   constructor(rows: ExpenseEntry[], failOnSqlPrefix: string | null = null) {
     this.rows = [...rows];
@@ -111,6 +112,7 @@ class FakeDatabase {
     this.execStatements = [];
     this.runStatements = [];
     this.failOnSqlPrefix = failOnSqlPrefix;
+    this.transactionDepth = 0;
   }
 
   async execAsync(sql: string) {
@@ -361,6 +363,11 @@ class FakeDatabase {
   }
 
   async withTransactionAsync<T>(task: () => Promise<T>) {
+    if (this.transactionDepth > 0) {
+      throw new Error('nested transaction');
+    }
+
+    this.transactionDepth += 1;
     const snapshot = {
       rows: this.rows.map((row) => ({ ...row })),
       categories: this.categories.map((row) => ({ ...row })),
@@ -380,6 +387,8 @@ class FakeDatabase {
       this.execStatements = snapshot.execStatements;
       this.runStatements = snapshot.runStatements;
       throw error;
+    } finally {
+      this.transactionDepth -= 1;
     }
   }
 }
@@ -877,6 +886,37 @@ describe('database budget persistence', () => {
         '2026-04': 3000,
       },
     });
+  });
+
+  it('rolls back a combined import if category insertion fails', async () => {
+    const db = new FakeDatabase([]);
+    const initializeDatabase = requireDatabaseApi('initializeDatabase');
+    const setDefaultBudget = requireDatabaseApi('setDefaultBudget');
+    const setMonthlyBudgetOverride = requireDatabaseApi('setMonthlyBudgetOverride');
+    const importBackupMerge = requireDatabaseApi('importBackupMerge');
+    const getBudgetSettings = requireDatabaseApi('getBudgetSettings');
+    const getAllCategories = requireDatabaseApi('getAllCategories');
+    const getAllExpenses = requireDatabaseApi('getAllExpenses');
+
+    await initializeDatabase(db as never);
+    await setDefaultBudget(db as never, 2600);
+    await setMonthlyBudgetOverride(db as never, '2026-03', 2400);
+    db.failOnSqlPrefix = 'INSERT INTO SUBCATEGORIES';
+
+    await expect(importBackupMerge(db as never, schema3Backup)).rejects.toThrow('simulated failure');
+
+    await expect(getBudgetSettings(db as never)).resolves.toEqual({
+      defaultBudget: 2600,
+      monthlyBudgets: {
+        '2026-03': 2400,
+      },
+    });
+
+    const categories = await getAllCategories(db as never);
+    const expenses = await getAllExpenses(db as never);
+
+    expect(categories.some((category) => category.name === '旅行')).toBe(false);
+    expect(expenses).toHaveLength(0);
   });
 
   it('preserves existing budgets when restoring a legacy backup', async () => {

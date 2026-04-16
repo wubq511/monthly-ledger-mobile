@@ -536,72 +536,70 @@ async function mergeCategoryDefinitionsContents(
     skippedSubcategoryCount: 0,
   };
 
-  await db.withTransactionAsync(async () => {
-    let existingCategories = await getAllCategories(db);
-    const categoryByName = new Map(existingCategories.map((category) => [category.name, category]));
+  let existingCategories = await getAllCategories(db);
+  const categoryByName = new Map(existingCategories.map((category) => [category.name, category]));
 
-    for (const importedCategory of importedCategories) {
-      let targetCategory = categoryByName.get(importedCategory.name);
+  for (const importedCategory of importedCategories) {
+    let targetCategory = categoryByName.get(importedCategory.name);
 
-      if (!targetCategory) {
-        const createdCategory: CategoryRecord = {
-          ...importedCategory,
-          id: createId(),
-          sortOrder: existingCategories.length,
-          subcategories: [],
-        };
+    if (!targetCategory) {
+      const createdCategory: CategoryRecord = {
+        ...importedCategory,
+        id: createId(),
+        sortOrder: existingCategories.length,
+        subcategories: [],
+      };
 
-        await insertCategoryDefinition(db, createdCategory);
-        result.importedCategoryCount += 1;
-        existingCategories = [...existingCategories, createdCategory];
-        targetCategory = createdCategory;
-        categoryByName.set(targetCategory.name, targetCategory);
-      } else {
-        result.skippedCategoryCount += 1;
-      }
-
-      const existingSubcategoryNames = new Set(targetCategory.subcategories.map((subcategory) => subcategory.name));
-      let nextSubcategoryOrder = targetCategory.subcategories.length;
-
-      for (const importedSubcategory of importedCategory.subcategories) {
-        if (existingSubcategoryNames.has(importedSubcategory.name)) {
-          result.skippedSubcategoryCount += 1;
-          continue;
-        }
-
-        const createdSubcategory: SubcategoryRecord = {
-          ...importedSubcategory,
-          id: createId(),
-          categoryId: targetCategory.id,
-          sortOrder: nextSubcategoryOrder,
-        };
-
-        await db.runAsync(
-          `INSERT INTO subcategories (id, category_id, name, sort_order, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?)`,
-          [
-            createdSubcategory.id,
-            createdSubcategory.categoryId,
-            createdSubcategory.name,
-            createdSubcategory.sortOrder,
-            createdSubcategory.createdAt,
-            createdSubcategory.updatedAt,
-          ]
-        );
-
-        result.importedSubcategoryCount += 1;
-        existingSubcategoryNames.add(createdSubcategory.name);
-        nextSubcategoryOrder += 1;
-      }
-
-      existingCategories = await getAllCategories(db);
-      const refreshedTarget = existingCategories.find((category) => category.name === targetCategory.name);
-
-      if (refreshedTarget) {
-        categoryByName.set(refreshedTarget.name, refreshedTarget);
-      }
+      await insertCategoryDefinition(db, createdCategory);
+      result.importedCategoryCount += 1;
+      existingCategories = [...existingCategories, createdCategory];
+      targetCategory = createdCategory;
+      categoryByName.set(targetCategory.name, targetCategory);
+    } else {
+      result.skippedCategoryCount += 1;
     }
-  });
+
+    const existingSubcategoryNames = new Set(targetCategory.subcategories.map((subcategory) => subcategory.name));
+    let nextSubcategoryOrder = targetCategory.subcategories.length;
+
+    for (const importedSubcategory of importedCategory.subcategories) {
+      if (existingSubcategoryNames.has(importedSubcategory.name)) {
+        result.skippedSubcategoryCount += 1;
+        continue;
+      }
+
+      const createdSubcategory: SubcategoryRecord = {
+        ...importedSubcategory,
+        id: createId(),
+        categoryId: targetCategory.id,
+        sortOrder: nextSubcategoryOrder,
+      };
+
+      await db.runAsync(
+        `INSERT INTO subcategories (id, category_id, name, sort_order, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          createdSubcategory.id,
+          createdSubcategory.categoryId,
+          createdSubcategory.name,
+          createdSubcategory.sortOrder,
+          createdSubcategory.createdAt,
+          createdSubcategory.updatedAt,
+        ]
+      );
+
+      result.importedSubcategoryCount += 1;
+      existingSubcategoryNames.add(createdSubcategory.name);
+      nextSubcategoryOrder += 1;
+    }
+
+    existingCategories = await getAllCategories(db);
+    const refreshedTarget = existingCategories.find((category) => category.name === targetCategory.name);
+
+    if (refreshedTarget) {
+      categoryByName.set(refreshedTarget.name, refreshedTarget);
+    }
+  }
 
   return result;
 }
@@ -622,20 +620,18 @@ async function importExpensesMergeContents(
     skippedCount: 0,
   };
 
-  await db.withTransactionAsync(async () => {
-    const existingRows = await getAllExpenses(db);
-    const existingIds = new Set(existingRows.map((entry) => entry.id));
-    const rowsToInsert = entries.filter((entry) => !existingIds.has(entry.id));
+  const existingRows = await getAllExpenses(db);
+  const existingIds = new Set(existingRows.map((entry) => entry.id));
+  const rowsToInsert = entries.filter((entry) => !existingIds.has(entry.id));
 
-    for (const entry of rowsToInsert) {
-      await insertImportedExpense(db, entry);
-    }
+  for (const entry of rowsToInsert) {
+    await insertImportedExpense(db, entry);
+  }
 
-    result = {
-      importedCount: rowsToInsert.length,
-      skippedCount: entries.length - rowsToInsert.length,
-    };
-  });
+  result = {
+    importedCount: rowsToInsert.length,
+    skippedCount: entries.length - rowsToInsert.length,
+  };
 
   return result;
 }
@@ -656,18 +652,16 @@ async function replaceAllExpensesContents(
     skippedCount: 0,
   };
 
-  await db.withTransactionAsync(async () => {
-    await clearAllExpenses(db);
+  await clearAllExpenses(db);
 
-    for (const entry of entries) {
-      await insertImportedExpense(db, entry);
-    }
+  for (const entry of entries) {
+    await insertImportedExpense(db, entry);
+  }
 
-    result = {
-      importedCount: entries.length,
-      skippedCount: 0,
-    };
-  });
+  result = {
+    importedCount: entries.length,
+    skippedCount: 0,
+  };
 
   return result;
 }
