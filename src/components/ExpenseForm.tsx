@@ -3,7 +3,6 @@ import {
   Alert,
   Keyboard,
   type KeyboardEvent,
-  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -15,8 +14,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { BackupActions } from './BackupActions';
-import { CategoryManagerModal } from './CategoryManagerModal';
+import { LedgerManagementHubModal } from './LedgerManagementHubModal';
 import {
   DEFAULT_CATEGORY,
   getRuntimeCategoryDefinition,
@@ -77,8 +75,7 @@ export function ExpenseForm({
   const [note, setNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [keyboardInset, setKeyboardInset] = useState(0);
-  const [backupModalVisible, setBackupModalVisible] = useState(false);
-  const [categoryModalVisible, setCategoryModalVisible] = useState(false);
+  const [managementHubVisible, setManagementHubVisible] = useState(false);
   const amountInputRef = useRef<TextInput | null>(null);
 
   const categoryDefinition = getRuntimeCategoryDefinition(categories, category);
@@ -142,19 +139,9 @@ export function ExpenseForm({
     setSubcategory(nextDefinition.subcategories[0] ?? '');
   };
 
-  const handleOpenBackupModal = () => {
+  const handleOpenManagementHub = () => {
     Keyboard.dismiss();
-    setBackupModalVisible(true);
-  };
-
-  const handleOpenCategoryModal = () => {
-    Keyboard.dismiss();
-    setCategoryModalVisible(true);
-  };
-
-  const handleImported = async () => {
-    await onImported();
-    setBackupModalVisible(false);
+    setManagementHubVisible(true);
   };
 
   const handleSubmit = async () => {
@@ -226,17 +213,10 @@ export function ExpenseForm({
           <Text style={styles.heroTitle}>记下一笔，让总支出和趋势自动更新。</Text>
         </View>
 
-        <View style={styles.managementButtons}>
-          <Pressable onPress={handleOpenBackupModal} style={styles.backupEntryButton}>
-            <Text style={styles.backupEntryLabel}>账单备份与导入</Text>
-            <Text style={styles.backupEntryArrow}>↗</Text>
-          </Pressable>
-
-          <Pressable onPress={handleOpenCategoryModal} style={styles.backupEntryButton}>
-            <Text style={styles.backupEntryLabel}>分类管理</Text>
-            <Text style={styles.backupEntryArrow}>↗</Text>
-          </Pressable>
-        </View>
+        <Pressable onPress={handleOpenManagementHub} style={styles.backupEntryButton}>
+          <Text style={styles.backupEntryLabel}>账本设置</Text>
+          <Text style={styles.backupEntryArrow}>↗</Text>
+        </Pressable>
 
         <View style={styles.fieldBlock}>
           <Text style={styles.fieldLabel}>月份</Text>
@@ -366,11 +346,13 @@ export function ExpenseForm({
         </Pressable>
       </View>
 
-      <CategoryManagerModal
-        visible={categoryModalVisible}
-        loading={categoriesLoading}
+      <LedgerManagementHubModal
+        visible={managementHubVisible}
+        monthKey={monthKey}
         categories={categories}
-        onClose={() => setCategoryModalVisible(false)}
+        categoriesLoading={categoriesLoading}
+        onClose={() => setManagementHubVisible(false)}
+        onImported={onImported}
         onCreateCategory={onCreateCategory}
         onRenameCategory={onRenameCategory}
         onDeleteCategory={onDeleteCategory}
@@ -382,29 +364,6 @@ export function ExpenseForm({
         getCategoryUsageSummary={getCategoryUsageSummary}
         getSubcategoryUsageSummary={getSubcategoryUsageSummary}
       />
-
-      <Modal
-        visible={backupModalVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setBackupModalVisible(false)}>
-        <View style={styles.modalRoot}>
-          <Pressable style={styles.modalBackdrop} onPress={() => setBackupModalVisible(false)} />
-
-          <View
-            style={[
-              styles.modalCardWrap,
-              {
-                paddingTop: Math.max(insets.top, 20) + 28,
-                paddingBottom: Math.max(insets.bottom, 20) + 28,
-              },
-            ]}>
-            <View style={styles.modalCard}>
-              <BackupActions onImported={handleImported} />
-            </View>
-          </View>
-        </View>
-      </Modal>
     </View>
   );
 }
@@ -475,9 +434,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 12,
-  },
-  managementButtons: {
-    gap: 10,
   },
   backupEntryLabel: {
     fontSize: 15,
@@ -653,22 +609,5 @@ const styles = StyleSheet.create({
     fontFamily: 'SpaceGrotesk_700Bold',
     fontWeight: '700',
     color: '#FBF7F1',
-  },
-  modalRoot: {
-    flex: 1,
-    justifyContent: 'center',
-  },
-  modalBackdrop: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(27, 20, 16, 0.42)',
-  },
-  modalCardWrap: {
-    flex: 1,
-    justifyContent: 'center',
-    paddingHorizontal: 20,
-  },
-  modalCard: {
-    borderRadius: 32,
-    overflow: 'hidden',
   },
 });
