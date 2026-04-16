@@ -76,6 +76,7 @@ class FakeDatabase {
   subcategories: SubcategoryRow[];
   budgetSettings: BudgetSettingRow[];
   execStatements: string[];
+  runStatements: Array<{ sql: string; params: unknown[] }>;
 
   constructor(rows: ExpenseEntry[]) {
     this.rows = [...rows];
@@ -83,6 +84,7 @@ class FakeDatabase {
     this.subcategories = [];
     this.budgetSettings = [];
     this.execStatements = [];
+    this.runStatements = [];
   }
 
   async execAsync(sql: string) {
@@ -158,6 +160,7 @@ class FakeDatabase {
 
   async runAsync(sql: string, params: unknown[] = []) {
     const normalized = normalizeSql(sql);
+    this.runStatements.push({ sql, params: [...params] });
 
     if (normalized.startsWith('DELETE FROM EXPENSES WHERE ID = ?')) {
       this.rows = this.rows.filter((row) => row.id !== params[0]);
@@ -573,6 +576,30 @@ describe('database budget persistence', () => {
     expect(combinedSql).toContain('month_key TEXT NOT NULL DEFAULT');
     expect(combinedSql).toContain('CREATE UNIQUE INDEX IF NOT EXISTS idx_budget_settings_scope_month');
     expect(combinedSql).toContain('ON budget_settings(scope, month_key)');
+  });
+
+  it('uses conflict-aware upserts for default and monthly budgets', async () => {
+    const db = new FakeDatabase([]);
+    const setDefaultBudget = requireDatabaseApi('setDefaultBudget');
+    const setMonthlyBudgetOverride = requireDatabaseApi('setMonthlyBudgetOverride');
+
+    await setDefaultBudget(db as never, 3200);
+    await setMonthlyBudgetOverride(db as never, '2026-04', 2800);
+
+    expect(db.runStatements).toEqual([
+      {
+        sql: `INSERT INTO budget_settings (scope, month_key, amount, updated_at)
+     VALUES ('default', '', ?, ?)
+     ON CONFLICT(scope, month_key) DO UPDATE SET amount = excluded.amount, updated_at = excluded.updated_at`,
+        params: [3200, expect.any(String)],
+      },
+      {
+        sql: `INSERT INTO budget_settings (scope, month_key, amount, updated_at)
+     VALUES ('month', ?, ?, ?)
+     ON CONFLICT(scope, month_key) DO UPDATE SET amount = excluded.amount, updated_at = excluded.updated_at`,
+        params: ['2026-04', 2800, expect.any(String)],
+      },
+    ]);
   });
 
   it('stores and reads the default budget and monthly overrides', async () => {
