@@ -30,9 +30,11 @@ export function useCategoryData() {
       const rows = await getAllCategories(db);
       setCategories(rows);
       setError(null);
+      return rows;
     } catch (fetchError) {
       const message = fetchError instanceof Error ? fetchError.message : '读取分类失败';
       setError(message);
+      throw fetchError instanceof Error ? fetchError : new Error(message);
     } finally {
       setReady(true);
       setLoading(false);
@@ -40,7 +42,9 @@ export function useCategoryData() {
   };
 
   useEffect(() => {
-    void refresh();
+    void refresh().catch(() => {
+      // The hook exposes error state for initial load failures.
+    });
   }, [db]);
 
   const runMutation = async (task: () => Promise<void>) => {

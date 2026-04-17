@@ -28,9 +28,11 @@ export function useBudgetSettings() {
       const nextSettings = await getBudgetSettings(db);
       setSettings(nextSettings);
       setError(null);
+      return nextSettings;
     } catch (fetchError) {
       const message = fetchError instanceof Error ? fetchError.message : '读取预算设置失败';
       setError(message);
+      throw fetchError instanceof Error ? fetchError : new Error(message);
     } finally {
       setReady(true);
       setLoading(false);
@@ -38,7 +40,9 @@ export function useBudgetSettings() {
   };
 
   useEffect(() => {
-    void refresh();
+    void refresh().catch(() => {
+      // The hook exposes error state for initial load failures.
+    });
   }, [db]);
 
   const runMutation = async (task: () => Promise<void>) => {

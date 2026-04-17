@@ -199,7 +199,9 @@ function LedgerApp() {
             budgetSettings={budgetSettings}
             budgetLoading={budgetLoading}
             budgetError={budgetError}
-            onRefreshBudgetSettings={refreshBudgetSettings}
+            onRefreshBudgetSettings={async () => {
+              await refreshBudgetSettings();
+            }}
             onSetDefaultBudget={setDefaultBudget}
             onSetMonthlyBudgetOverride={setMonthlyBudgetOverride}
             onClearMonthlyBudgetOverride={clearMonthlyBudgetOverride}
