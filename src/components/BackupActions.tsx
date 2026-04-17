@@ -8,16 +8,16 @@ import * as Sharing from 'expo-sharing';
 
 import { buildBackupPayload, createBackupFileName, parseBackupJson } from '../lib/backup';
 import {
+  importBackupMerge,
   exportAllCategories,
   exportAllExpenses,
-  mergeCategoryDefinitions,
-  importExpensesMerge,
-  replaceAllCategoryDefinitions,
-  replaceAllExpenses,
+  getBudgetSettings,
+  restoreBackupReplace,
 } from '../lib/database';
-import type { CategoryRecord, ExpenseEntry } from '../types/ledger';
+import type { LedgerMode, ParsedLedgerBackupFile } from '../types/ledger';
 
 interface BackupActionsProps {
+  ledgerMode: LedgerMode;
   onImported: () => Promise<void>;
 }
 
@@ -37,25 +37,24 @@ function formatReplaceSummary(importedCount: number, categoryCount: number) {
   return `已清空当前账本，并恢复 ${importedCount} 条记录与 ${categoryCount} 个大类`;
 }
 
-export function BackupActions({ onImported }: BackupActionsProps) {
+export function BackupActions({ ledgerMode, onImported }: BackupActionsProps) {
   const db = useSQLiteContext();
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const busy = busyLabel !== null;
 
-  const runMergeImport = async (entries: ExpenseEntry[], categories: CategoryRecord[]) => {
+  const runMergeImport = async (backup: ParsedLedgerBackupFile) => {
     setBusyLabel('正在合并导入...');
 
     try {
-      const categoryResult = await mergeCategoryDefinitions(db, categories);
-      const result = await importExpensesMerge(db, entries);
+      const result = await importBackupMerge(db, backup);
       await onImported();
       Alert.alert(
         '导入完成',
-        formatMergeSummary(result.importedCount, result.skippedCount, {
-          imported: categoryResult.importedCategoryCount,
-          skipped: categoryResult.skippedCategoryCount,
-          importedSubcategories: categoryResult.importedSubcategoryCount,
-          skippedSubcategories: categoryResult.skippedSubcategoryCount,
+        formatMergeSummary(result.expenseResult.importedCount, result.expenseResult.skippedCount, {
+          imported: result.categoryResult.importedCategoryCount,
+          skipped: result.categoryResult.skippedCategoryCount,
+          importedSubcategories: result.categoryResult.importedSubcategoryCount,
+          skippedSubcategories: result.categoryResult.skippedSubcategoryCount,
         })
       );
     } catch (error) {
@@ -65,14 +64,13 @@ export function BackupActions({ onImported }: BackupActionsProps) {
     }
   };
 
-  const runReplaceRestore = async (entries: ExpenseEntry[], categories: CategoryRecord[]) => {
+  const runReplaceRestore = async (backup: ParsedLedgerBackupFile) => {
     setBusyLabel('正在覆盖恢复...');
 
     try {
-      await replaceAllCategoryDefinitions(db, categories);
-      const result = await replaceAllExpenses(db, entries);
+      const result = await restoreBackupReplace(db, backup);
       await onImported();
-      Alert.alert('恢复完成', formatReplaceSummary(result.importedCount, categories.length));
+      Alert.alert('恢复完成', formatReplaceSummary(result.expenseResult.importedCount, backup.categories.length));
     } catch (error) {
       Alert.alert('恢复失败', getErrorMessage(error, '覆盖恢复失败'));
     } finally {
@@ -84,13 +82,19 @@ export function BackupActions({ onImported }: BackupActionsProps) {
     setBusyLabel('正在生成备份...');
 
     try {
-      const [entries, categories] = await Promise.all([exportAllExpenses(db), exportAllCategories(db)]);
+      const [entries, categories, budgetSettings] = await Promise.all([
+        exportAllExpenses(db),
+        exportAllCategories(db),
+        getBudgetSettings(db),
+      ]);
       const exportedAt = new Date().toISOString();
       const payload = buildBackupPayload(
         entries,
         categories,
+        budgetSettings,
         Constants.expoConfig?.version ?? 'unknown',
-        exportedAt
+        exportedAt,
+        ledgerMode
       );
       const directory = new Directory(Paths.cache, 'backups');
       directory.create({ idempotent: true, intermediates: true });
@@ -138,30 +142,30 @@ export function BackupActions({ onImported }: BackupActionsProps) {
         '选择恢复方式',
         `检测到 ${backup.entries.length} 条记录和 ${backup.categories.length} 个大类，请选择恢复方式。`,
         [
-        { text: '取消', style: 'cancel' },
-        {
-          text: '合并导入',
-          onPress: () => {
-            void runMergeImport(backup.entries, backup.categories);
+          { text: '取消', style: 'cancel' },
+          {
+            text: '合并导入',
+            onPress: () => {
+              void runMergeImport(backup);
+            },
           },
-        },
-        {
-          text: '覆盖恢复',
-          style: 'destructive',
-          onPress: () => {
-            Alert.alert('覆盖当前账本？', '当前账本和分类配置会被清空，然后恢复备份中的全部内容。', [
-              { text: '取消', style: 'cancel' },
-              {
-                text: '确认覆盖',
-                style: 'destructive',
-                onPress: () => {
-                  void runReplaceRestore(backup.entries, backup.categories);
+          {
+            text: '覆盖恢复',
+            style: 'destructive',
+            onPress: () => {
+              Alert.alert('覆盖当前账本？', '当前账本和分类配置会被清空，然后恢复备份中的全部内容。', [
+                { text: '取消', style: 'cancel' },
+                {
+                  text: '确认覆盖',
+                  style: 'destructive',
+                  onPress: () => {
+                    void runReplaceRestore(backup);
+                  },
                 },
-              },
-            ]);
+              ]);
+            },
           },
-        },
-      ]
+        ]
       );
     } catch (error) {
       Alert.alert('导入失败', getErrorMessage(error, '导入备份失败'));
@@ -172,11 +176,7 @@ export function BackupActions({ onImported }: BackupActionsProps) {
 
   return (
     <View style={styles.card}>
-      <Text style={styles.eyebrow}>Data Control</Text>
-      <Text style={styles.title}>数据管理</Text>
-      <Text style={styles.body}>导出当前账本为 JSON 备份，或从备份恢复到本机。</Text>
-      <Text style={styles.tip}>合并导入会跳过重复记录，覆盖恢复会先清空当前账本。</Text>
-      {busyLabel ? <Text style={styles.status}>{busyLabel}</Text> : null}
+      <Text style={styles.title}>备份与导入</Text>
 
       <View style={styles.buttonGroup}>
         <Pressable
@@ -189,7 +189,9 @@ export function BackupActions({ onImported }: BackupActionsProps) {
             busy && styles.buttonDisabled,
             pressed && !busy && styles.buttonPressed,
           ]}>
-          <Text style={styles.primaryButtonText}>导出 JSON 备份</Text>
+          <Text style={styles.primaryButtonText}>
+            {busyLabel === '正在生成备份...' ? '正在导出...' : '导出 JSON'}
+          </Text>
         </Pressable>
 
         <Pressable
@@ -202,7 +204,9 @@ export function BackupActions({ onImported }: BackupActionsProps) {
             busy && styles.buttonDisabled,
             pressed && !busy && styles.secondaryButtonPressed,
           ]}>
-          <Text style={styles.secondaryButtonText}>导入备份</Text>
+          <Text style={styles.secondaryButtonText}>
+            {busyLabel !== null && busyLabel !== '正在生成备份...' ? '处理中...' : '导入备份'}
+          </Text>
         </Pressable>
       </View>
     </View>
@@ -219,38 +223,12 @@ const styles = StyleSheet.create({
     paddingVertical: 18,
     gap: 10,
   },
-  eyebrow: {
-    fontSize: 12,
-    fontFamily: 'SpaceGrotesk_700Bold',
-    fontWeight: '700',
-    letterSpacing: 1.2,
-    textTransform: 'uppercase',
-    color: '#9A5E3E',
-  },
   title: {
     fontSize: 20,
     lineHeight: 24,
     fontFamily: 'SpaceGrotesk_700Bold',
     fontWeight: '700',
     color: '#231B16',
-  },
-  body: {
-    fontSize: 14,
-    lineHeight: 21,
-    fontFamily: 'SpaceGrotesk_400Regular',
-    color: '#6E5C50',
-  },
-  tip: {
-    fontSize: 13,
-    lineHeight: 19,
-    fontFamily: 'SpaceGrotesk_500Medium',
-    color: '#8A7567',
-  },
-  status: {
-    fontSize: 13,
-    lineHeight: 19,
-    fontFamily: 'SpaceGrotesk_500Medium',
-    color: '#9A5E3E',
   },
   buttonGroup: {
     marginTop: 4,

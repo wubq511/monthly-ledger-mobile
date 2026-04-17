@@ -2,12 +2,15 @@ import type { SQLiteDatabase } from 'expo-sqlite';
 
 import { CATEGORY_DEFINITIONS, getSeedColorByIndex } from '../constants/categories';
 import type {
+  BudgetSettings,
   CategoryRecord,
   CategoryUsageSummary,
   CreateCategoryInput,
   ExpenseDraft,
   ExpenseEntry,
   ImportExpensesResult,
+  LedgerMode,
+  ParsedLedgerBackupFile,
   SubcategoryUsageSummary,
   SubcategoryRecord,
 } from '../types/ledger';
@@ -18,6 +21,7 @@ function createId() {
 
 interface ExpenseRow {
   id: string;
+  date: string;
   month_key: string;
   amount: number;
   category: string;
@@ -44,6 +48,17 @@ interface SubcategoryRow {
   updated_at: string;
 }
 
+interface BudgetSettingRow {
+  scope: string;
+  month_key: string;
+  amount: number;
+}
+
+interface AppSettingRow {
+  key: string;
+  value: string;
+}
+
 export interface ImportCategoryDefinitionsResult {
   importedCategoryCount: number;
   importedSubcategoryCount: number;
@@ -51,9 +66,21 @@ export interface ImportCategoryDefinitionsResult {
   skippedSubcategoryCount: number;
 }
 
+export interface ImportBackupMergeResult {
+  categoryResult: ImportCategoryDefinitionsResult;
+  expenseResult: ImportExpensesResult;
+  budgetSettingsApplied: boolean;
+}
+
+export interface ReplaceBackupResult {
+  expenseResult: ImportExpensesResult;
+  budgetSettingsApplied: boolean;
+}
+
 function mapExpenseRow(row: ExpenseRow): ExpenseEntry {
   return {
     id: row.id,
+    dateKey: row.date,
     monthKey: row.month_key,
     amount: row.amount,
     category: row.category,
@@ -185,10 +212,25 @@ export async function initializeDatabase(db: SQLiteDatabase) {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS budget_settings (
+      scope TEXT NOT NULL,
+      month_key TEXT NOT NULL DEFAULT '',
+      amount REAL NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY NOT NULL,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_expenses_month_key ON expenses(month_key);
     CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(date);
     CREATE INDEX IF NOT EXISTS idx_categories_sort_order ON categories(sort_order);
     CREATE INDEX IF NOT EXISTS idx_subcategories_category_sort ON subcategories(category_id, sort_order);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_budget_settings_scope_month
+    ON budget_settings(scope, month_key);
   `);
 
   const categories = await getAllCategoryRows(db);
@@ -200,9 +242,9 @@ export async function initializeDatabase(db: SQLiteDatabase) {
 
 export async function getAllExpenses(db: SQLiteDatabase) {
   const rows = await db.getAllAsync<ExpenseRow>(
-    `SELECT id, month_key, amount, category, subcategory, note, created_at
+    `SELECT id, date, month_key, amount, category, subcategory, note, created_at
      FROM expenses
-     ORDER BY month_key DESC, created_at DESC`
+     ORDER BY date DESC, created_at DESC`
   );
 
   return rows.map(mapExpenseRow);
@@ -230,17 +272,101 @@ export async function exportAllCategories(db: SQLiteDatabase) {
   return getAllCategories(db);
 }
 
+export async function getBudgetSettings(db: SQLiteDatabase): Promise<BudgetSettings> {
+  const rows = await db.getAllAsync<BudgetSettingRow>(
+    `SELECT scope, month_key, amount
+     FROM budget_settings
+     ORDER BY month_key ASC`
+  );
+
+  const monthlyBudgets: Record<string, number> = {};
+  let defaultBudget: number | null = null;
+
+  for (const row of rows) {
+    if (row.scope === 'default') {
+      defaultBudget = row.amount;
+      continue;
+    }
+
+    if (row.month_key) {
+      monthlyBudgets[row.month_key] = row.amount;
+    }
+  }
+
+  return { defaultBudget, monthlyBudgets };
+}
+
+export async function setDefaultBudget(db: SQLiteDatabase, amount: number) {
+  await db.runAsync(
+    `INSERT INTO budget_settings (scope, month_key, amount, updated_at)
+     VALUES ('default', '', ?, ?)
+     ON CONFLICT(scope, month_key) DO UPDATE SET amount = excluded.amount, updated_at = excluded.updated_at`,
+    [amount, new Date().toISOString()]
+  );
+}
+
+export async function getLedgerMode(db: SQLiteDatabase): Promise<LedgerMode> {
+  const rows = await db.getAllAsync<AppSettingRow>(
+    `SELECT key, value
+     FROM app_settings
+     WHERE key = 'ledger_mode'
+     LIMIT 1`
+  );
+  const value = rows[0]?.value;
+
+  return value === 'day' ? 'day' : 'month';
+}
+
+export async function setLedgerMode(db: SQLiteDatabase, mode: LedgerMode) {
+  await db.runAsync(
+    `INSERT INTO app_settings (key, value, updated_at)
+     VALUES (?, ?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+    ['ledger_mode', mode, new Date().toISOString()]
+  );
+}
+
+export async function setMonthlyBudgetOverride(db: SQLiteDatabase, monthKey: string, amount: number) {
+  await db.runAsync(
+    `INSERT INTO budget_settings (scope, month_key, amount, updated_at)
+     VALUES ('month', ?, ?, ?)
+     ON CONFLICT(scope, month_key) DO UPDATE SET amount = excluded.amount, updated_at = excluded.updated_at`,
+    [monthKey, amount, new Date().toISOString()]
+  );
+}
+
+export async function clearMonthlyBudgetOverride(db: SQLiteDatabase, monthKey: string) {
+  await db.runAsync(`DELETE FROM budget_settings WHERE scope = 'month' AND month_key = ?`, [monthKey]);
+}
+
+async function replaceBudgetSettingsContents(db: SQLiteDatabase, settings: BudgetSettings) {
+  await db.runAsync('DELETE FROM budget_settings');
+
+  if (settings.defaultBudget !== null) {
+    await setDefaultBudget(db, settings.defaultBudget);
+  }
+
+  for (const [monthKey, amount] of Object.entries(settings.monthlyBudgets)) {
+    await setMonthlyBudgetOverride(db, monthKey, amount);
+  }
+}
+
+export async function replaceBudgetSettings(db: SQLiteDatabase, settings: BudgetSettings) {
+  await db.withTransactionAsync(async () => {
+    await replaceBudgetSettingsContents(db, settings);
+  });
+}
+
 export async function insertExpense(db: SQLiteDatabase, draft: ExpenseDraft) {
   const id = createId();
   const createdAt = new Date().toISOString();
-  const syntheticDate = `${draft.monthKey}-01`;
 
   await db.runAsync(
     `INSERT INTO expenses (id, date, month_key, amount, category, subcategory, note, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
-      syntheticDate,
+      draft.dateKey,
       draft.monthKey,
       draft.amount,
       draft.category,
@@ -418,18 +544,22 @@ export async function getSubcategoryUsageSummary(
   };
 }
 
+async function replaceAllCategoryDefinitionsContents(db: SQLiteDatabase, categories: CategoryRecord[]) {
+  await db.runAsync('DELETE FROM subcategories');
+  await db.runAsync('DELETE FROM categories');
+
+  for (const category of categories) {
+    await insertCategoryDefinition(db, category);
+  }
+}
+
 export async function replaceAllCategoryDefinitions(db: SQLiteDatabase, categories: CategoryRecord[]) {
   await db.withTransactionAsync(async () => {
-    await db.runAsync('DELETE FROM subcategories');
-    await db.runAsync('DELETE FROM categories');
-
-    for (const category of categories) {
-      await insertCategoryDefinition(db, category);
-    }
+    await replaceAllCategoryDefinitionsContents(db, categories);
   });
 }
 
-export async function mergeCategoryDefinitions(
+async function mergeCategoryDefinitionsContents(
   db: SQLiteDatabase,
   importedCategories: CategoryRecord[]
 ): Promise<ImportCategoryDefinitionsResult> {
@@ -440,72 +570,112 @@ export async function mergeCategoryDefinitions(
     skippedSubcategoryCount: 0,
   };
 
-  await db.withTransactionAsync(async () => {
-    let existingCategories = await getAllCategories(db);
-    const categoryByName = new Map(existingCategories.map((category) => [category.name, category]));
+  let existingCategories = await getAllCategories(db);
+  const categoryByName = new Map(existingCategories.map((category) => [category.name, category]));
 
-    for (const importedCategory of importedCategories) {
-      let targetCategory = categoryByName.get(importedCategory.name);
+  for (const importedCategory of importedCategories) {
+    let targetCategory = categoryByName.get(importedCategory.name);
 
-      if (!targetCategory) {
-        const createdCategory: CategoryRecord = {
-          ...importedCategory,
-          id: createId(),
-          sortOrder: existingCategories.length,
-          subcategories: [],
-        };
+    if (!targetCategory) {
+      const createdCategory: CategoryRecord = {
+        ...importedCategory,
+        id: createId(),
+        sortOrder: existingCategories.length,
+        subcategories: [],
+      };
 
-        await insertCategoryDefinition(db, createdCategory);
-        result.importedCategoryCount += 1;
-        existingCategories = [...existingCategories, createdCategory];
-        targetCategory = createdCategory;
-        categoryByName.set(targetCategory.name, targetCategory);
-      } else {
-        result.skippedCategoryCount += 1;
-      }
-
-      const existingSubcategoryNames = new Set(targetCategory.subcategories.map((subcategory) => subcategory.name));
-      let nextSubcategoryOrder = targetCategory.subcategories.length;
-
-      for (const importedSubcategory of importedCategory.subcategories) {
-        if (existingSubcategoryNames.has(importedSubcategory.name)) {
-          result.skippedSubcategoryCount += 1;
-          continue;
-        }
-
-        const createdSubcategory: SubcategoryRecord = {
-          ...importedSubcategory,
-          id: createId(),
-          categoryId: targetCategory.id,
-          sortOrder: nextSubcategoryOrder,
-        };
-
-        await db.runAsync(
-          `INSERT INTO subcategories (id, category_id, name, sort_order, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?)`,
-          [
-            createdSubcategory.id,
-            createdSubcategory.categoryId,
-            createdSubcategory.name,
-            createdSubcategory.sortOrder,
-            createdSubcategory.createdAt,
-            createdSubcategory.updatedAt,
-          ]
-        );
-
-        result.importedSubcategoryCount += 1;
-        existingSubcategoryNames.add(createdSubcategory.name);
-        nextSubcategoryOrder += 1;
-      }
-
-      existingCategories = await getAllCategories(db);
-      const refreshedTarget = existingCategories.find((category) => category.name === targetCategory.name);
-
-      if (refreshedTarget) {
-        categoryByName.set(refreshedTarget.name, refreshedTarget);
-      }
+      await insertCategoryDefinition(db, createdCategory);
+      result.importedCategoryCount += 1;
+      existingCategories = [...existingCategories, createdCategory];
+      targetCategory = createdCategory;
+      categoryByName.set(targetCategory.name, targetCategory);
+    } else {
+      result.skippedCategoryCount += 1;
     }
+
+    const existingSubcategoryNames = new Set(targetCategory.subcategories.map((subcategory) => subcategory.name));
+    let nextSubcategoryOrder = targetCategory.subcategories.length;
+
+    for (const importedSubcategory of importedCategory.subcategories) {
+      if (existingSubcategoryNames.has(importedSubcategory.name)) {
+        result.skippedSubcategoryCount += 1;
+        continue;
+      }
+
+      const createdSubcategory: SubcategoryRecord = {
+        ...importedSubcategory,
+        id: createId(),
+        categoryId: targetCategory.id,
+        sortOrder: nextSubcategoryOrder,
+      };
+
+      await db.runAsync(
+        `INSERT INTO subcategories (id, category_id, name, sort_order, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          createdSubcategory.id,
+          createdSubcategory.categoryId,
+          createdSubcategory.name,
+          createdSubcategory.sortOrder,
+          createdSubcategory.createdAt,
+          createdSubcategory.updatedAt,
+        ]
+      );
+
+      result.importedSubcategoryCount += 1;
+      existingSubcategoryNames.add(createdSubcategory.name);
+      nextSubcategoryOrder += 1;
+    }
+
+    existingCategories = await getAllCategories(db);
+    const refreshedTarget = existingCategories.find((category) => category.name === targetCategory.name);
+
+    if (refreshedTarget) {
+      categoryByName.set(refreshedTarget.name, refreshedTarget);
+    }
+  }
+
+  return result;
+}
+
+export async function mergeCategoryDefinitions(
+  db: SQLiteDatabase,
+  importedCategories: CategoryRecord[]
+): Promise<ImportCategoryDefinitionsResult> {
+  let result: ImportCategoryDefinitionsResult | null = null;
+
+  await db.withTransactionAsync(async () => {
+    result = await mergeCategoryDefinitionsContents(db, importedCategories);
   });
+
+  if (result === null) {
+    throw new Error('transaction completed without returning a result');
+  }
+
+  return result;
+}
+
+async function importExpensesMergeContents(
+  db: SQLiteDatabase,
+  entries: ExpenseEntry[]
+): Promise<ImportExpensesResult> {
+  let result: ImportExpensesResult = {
+    importedCount: 0,
+    skippedCount: 0,
+  };
+
+  const existingRows = await getAllExpenses(db);
+  const existingIds = new Set(existingRows.map((entry) => entry.id));
+  const rowsToInsert = entries.filter((entry) => !existingIds.has(entry.id));
+
+  for (const entry of rowsToInsert) {
+    await insertImportedExpense(db, entry);
+  }
+
+  result = {
+    importedCount: rowsToInsert.length,
+    skippedCount: entries.length - rowsToInsert.length,
+  };
 
   return result;
 }
@@ -514,30 +684,20 @@ export async function importExpensesMerge(
   db: SQLiteDatabase,
   entries: ExpenseEntry[]
 ): Promise<ImportExpensesResult> {
-  let result: ImportExpensesResult = {
-    importedCount: 0,
-    skippedCount: 0,
-  };
+  let result: ImportExpensesResult | null = null;
 
   await db.withTransactionAsync(async () => {
-    const existingRows = await getAllExpenses(db);
-    const existingIds = new Set(existingRows.map((entry) => entry.id));
-    const rowsToInsert = entries.filter((entry) => !existingIds.has(entry.id));
-
-    for (const entry of rowsToInsert) {
-      await insertImportedExpense(db, entry);
-    }
-
-    result = {
-      importedCount: rowsToInsert.length,
-      skippedCount: entries.length - rowsToInsert.length,
-    };
+    result = await importExpensesMergeContents(db, entries);
   });
+
+  if (result === null) {
+    throw new Error('transaction completed without returning a result');
+  }
 
   return result;
 }
 
-export async function replaceAllExpenses(
+async function replaceAllExpensesContents(
   db: SQLiteDatabase,
   entries: ExpenseEntry[]
 ): Promise<ImportExpensesResult> {
@@ -546,18 +706,96 @@ export async function replaceAllExpenses(
     skippedCount: 0,
   };
 
-  await db.withTransactionAsync(async () => {
-    await clearAllExpenses(db);
+  await clearAllExpenses(db);
 
-    for (const entry of entries) {
-      await insertImportedExpense(db, entry);
+  for (const entry of entries) {
+    await insertImportedExpense(db, entry);
+  }
+
+  result = {
+    importedCount: entries.length,
+    skippedCount: 0,
+  };
+
+  return result;
+}
+
+export async function replaceAllExpenses(
+  db: SQLiteDatabase,
+  entries: ExpenseEntry[]
+): Promise<ImportExpensesResult> {
+  let result: ImportExpensesResult | null = null;
+
+  await db.withTransactionAsync(async () => {
+    result = await replaceAllExpensesContents(db, entries);
+  });
+
+  if (result === null) {
+    throw new Error('transaction completed without returning a result');
+  }
+
+  return result;
+}
+
+export async function importBackupMerge(
+  db: SQLiteDatabase,
+  backup: ParsedLedgerBackupFile
+): Promise<ImportBackupMergeResult> {
+  let result: ImportBackupMergeResult | null = null;
+
+  await db.withTransactionAsync(async () => {
+    const categoryResult = await mergeCategoryDefinitionsContents(db, backup.categories);
+    const expenseResult = await importExpensesMergeContents(db, backup.entries);
+
+    if (backup.hasBudgetSettings) {
+      await replaceBudgetSettingsContents(db, backup.budgetSettings);
+    }
+
+    if (backup.hasLedgerMode) {
+      await setLedgerMode(db, backup.ledgerMode);
     }
 
     result = {
-      importedCount: entries.length,
-      skippedCount: 0,
+      categoryResult,
+      expenseResult,
+      budgetSettingsApplied: backup.hasBudgetSettings,
     };
   });
+
+  if (result === null) {
+    throw new Error('transaction completed without returning a result');
+  }
+
+  return result;
+}
+
+export async function restoreBackupReplace(
+  db: SQLiteDatabase,
+  backup: ParsedLedgerBackupFile
+): Promise<ReplaceBackupResult> {
+  let result: ReplaceBackupResult | null = null;
+
+  await db.withTransactionAsync(async () => {
+    await replaceAllCategoryDefinitionsContents(db, backup.categories);
+    const expenseResult = await replaceAllExpensesContents(db, backup.entries);
+
+    if (backup.hasBudgetSettings) {
+      await replaceBudgetSettingsContents(db, backup.budgetSettings);
+    }
+
+    if (backup.hasLedgerMode) {
+      await setLedgerMode(db, backup.ledgerMode);
+    }
+
+    result = {
+      expenseResult,
+      budgetSettingsApplied: backup.hasBudgetSettings,
+    };
+  });
+
+  if (result === null) {
+    throw new Error('transaction completed without returning a result');
+  }
 
   return result;
 }
@@ -568,7 +806,7 @@ async function insertImportedExpense(db: SQLiteDatabase, entry: ExpenseEntry) {
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       entry.id,
-      `${entry.monthKey}-01`,
+      entry.dateKey,
       entry.monthKey,
       entry.amount,
       entry.category,

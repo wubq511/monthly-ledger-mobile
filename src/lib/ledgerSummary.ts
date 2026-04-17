@@ -1,6 +1,6 @@
 import { getCategoryColor } from '../constants/categories';
 import { buildTrendWindowMonths } from './trendWindow';
-import type { CategoryRecord, ExpenseEntry } from '../types/ledger';
+import type { BudgetSettings, CategoryRecord, ExpenseEntry } from '../types/ledger';
 
 export interface CategoryTotal {
   name: string;
@@ -17,6 +17,7 @@ export interface MonthlyTrendPoint {
 
 export interface BudgetSnapshot {
   total: number;
+  budgetLimit: number;
   remaining: number;
   overspend: number;
   utilizationRate: number;
@@ -59,13 +60,14 @@ export interface LedgerSummary {
 
 export const MONTHLY_BUDGET_LIMIT = 2000;
 
-function buildBudgetSnapshot(total: number): BudgetSnapshot {
-  const overspend = Math.max(total - MONTHLY_BUDGET_LIMIT, 0);
-  const remaining = Math.max(MONTHLY_BUDGET_LIMIT - total, 0);
-  const utilizationRate = MONTHLY_BUDGET_LIMIT > 0 ? total / MONTHLY_BUDGET_LIMIT : 0;
+function buildBudgetSnapshot(total: number, budgetLimit: number): BudgetSnapshot {
+  const overspend = Math.max(total - budgetLimit, 0);
+  const remaining = Math.max(budgetLimit - total, 0);
+  const utilizationRate = budgetLimit > 0 ? total / budgetLimit : 0;
 
   return {
     total,
+    budgetLimit,
     remaining,
     overspend,
     utilizationRate,
@@ -131,12 +133,29 @@ function buildOrderedCategoryNames(entries: ExpenseEntry[], categories: Category
   return [...names, ...historicalOnlyNames];
 }
 
+function resolveMonthBudgetLimit(budgetSettings: BudgetSettings, monthKey: string) {
+  if (Object.prototype.hasOwnProperty.call(budgetSettings.monthlyBudgets, monthKey)) {
+    return budgetSettings.monthlyBudgets[monthKey];
+  }
+
+  if (budgetSettings.defaultBudget !== null) {
+    return budgetSettings.defaultBudget;
+  }
+
+  return MONTHLY_BUDGET_LIMIT;
+}
+
 export function buildLedgerSummary(
   entries: ExpenseEntry[],
   categories: CategoryRecord[],
   selectedMonth: string,
+  budgetSettings: BudgetSettings,
   formatShortMonthLabel: (monthKey: string) => string
 ): LedgerSummary {
+  const resolvedBudgetSettings = budgetSettings ?? {
+    defaultBudget: null,
+    monthlyBudgets: {},
+  };
   const monthlyTotals = new Map<string, number>();
   const monthCategoryTotals = new Map<string, Map<string, number>>();
   const selectedCategoryTotals = new Map<string, number>();
@@ -170,6 +189,19 @@ export function buildLedgerSummary(
   const categoryColors = buildCategoryColors(entries, categories);
   const trackedMonthCount = monthlyTotals.size;
   const monthlyAverage = trackedMonthCount > 0 ? grandTotal / trackedMonthCount : 0;
+  const selectedBudgetLimit = resolveMonthBudgetLimit(resolvedBudgetSettings, selectedMonth);
+  const trackedBudgetRows = Array.from(monthlyTotals.entries())
+    .map(([monthKey, total]) => ({
+      monthKey,
+      label: formatShortMonthLabel(monthKey),
+      ...buildBudgetSnapshot(total, resolveMonthBudgetLimit(resolvedBudgetSettings, monthKey)),
+    }))
+    .sort(sortBudgetRowsByMonth);
+
+  const monthlyBudgetMonthKeys = new Set<string>(monthlyTotals.keys());
+  for (const monthKey of Object.keys(resolvedBudgetSettings.monthlyBudgets)) {
+    monthlyBudgetMonthKeys.add(monthKey);
+  }
 
   const selectedMonthRanking = Array.from(selectedCategoryTotals.entries())
     .map(([name, total]) => ({
@@ -181,21 +213,25 @@ export function buildLedgerSummary(
     .sort(sortCategoryTotals);
 
   const categoryTotals = selectedMonthRanking;
-  const selectedBudget = buildBudgetSnapshot(selectedTotal);
+  const selectedBudget = buildBudgetSnapshot(selectedTotal, selectedBudgetLimit);
 
-  const monthlyBudgetRows = Array.from(monthlyTotals.entries())
-    .map(([monthKey, total]) => ({
-      monthKey,
-      label: formatShortMonthLabel(monthKey),
-      ...buildBudgetSnapshot(total),
-    }))
+  const monthlyBudgetRows = Array.from(monthlyBudgetMonthKeys)
+    .map((monthKey) => {
+      const total = monthlyTotals.get(monthKey) ?? 0;
+
+      return {
+        monthKey,
+        label: formatShortMonthLabel(monthKey),
+        ...buildBudgetSnapshot(total, resolveMonthBudgetLimit(resolvedBudgetSettings, monthKey)),
+      };
+    })
     .sort(sortBudgetRowsByMonth);
 
   let totalOverspend = 0;
   let totalRemaining = 0;
   let overspendMonthCount = 0;
 
-  for (const row of monthlyBudgetRows) {
+  for (const row of trackedBudgetRows) {
     totalOverspend += row.overspend;
     totalRemaining += row.remaining;
 
@@ -206,7 +242,7 @@ export function buildLedgerSummary(
 
   const netBudgetBalance = totalRemaining - totalOverspend;
   const averageMonthlyOverspend = trackedMonthCount > 0 ? totalOverspend / trackedMonthCount : 0;
-  const overspendRanking = monthlyBudgetRows.filter((row) => row.isOverBudget).sort(sortBudgetRowsByOverspend);
+  const overspendRanking = trackedBudgetRows.filter((row) => row.isOverBudget).sort(sortBudgetRowsByOverspend);
 
   const categoryMonthRanking = buildOrderedCategoryNames(entries, categories).reduce<
     Record<string, CategoryMonthRankItem[]>

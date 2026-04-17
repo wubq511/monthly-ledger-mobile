@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useSQLiteContext } from 'expo-sqlite';
 
-import { deleteExpenseById, getAllExpenses, insertExpense } from '../lib/database';
-import type { ExpenseDraft, ExpenseEntry } from '../types/ledger';
+import { getLedgerMode, setLedgerMode as setLedgerModeRecord } from '../lib/database';
+import type { LedgerMode } from '../types/ledger';
 
-export function useLedgerData() {
+export function useLedgerMode() {
   const db = useSQLiteContext();
-  const [entries, setEntries] = useState<ExpenseEntry[]>([]);
+  const [mode, setMode] = useState<LedgerMode>('month');
   const [loading, setLoading] = useState(true);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -15,12 +15,12 @@ export function useLedgerData() {
     setLoading(true);
 
     try {
-      const rows = await getAllExpenses(db);
-      setEntries(rows);
+      const nextMode = await getLedgerMode(db);
+      setMode(nextMode);
       setError(null);
-      return rows;
+      return nextMode;
     } catch (fetchError) {
-      const message = fetchError instanceof Error ? fetchError.message : '读取账本失败';
+      const message = fetchError instanceof Error ? fetchError.message : '读取记账模式失败';
       setError(message);
       throw fetchError instanceof Error ? fetchError : new Error(message);
     } finally {
@@ -35,23 +35,11 @@ export function useLedgerData() {
     });
   }, [db]);
 
-  const addEntry = async (draft: ExpenseDraft) => {
+  const updateMode = async (nextMode: LedgerMode) => {
     setLoading(true);
 
     try {
-      await insertExpense(db, draft);
-      await refresh();
-    } catch (mutationError) {
-      setLoading(false);
-      throw mutationError;
-    }
-  };
-
-  const removeEntry = async (id: string) => {
-    setLoading(true);
-
-    try {
-      await deleteExpenseById(db, id);
+      await setLedgerModeRecord(db, nextMode);
       await refresh();
     } catch (mutationError) {
       setLoading(false);
@@ -60,12 +48,11 @@ export function useLedgerData() {
   };
 
   return {
-    entries,
+    mode,
     loading,
     ready,
     error,
-    addEntry,
-    removeEntry,
     refresh,
+    setMode: updateMode,
   };
 }

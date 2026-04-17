@@ -89,11 +89,9 @@ function formatStatusText(snapshot: BudgetSnapshot) {
 
 export function BudgetMeter({
   budget,
-  budgetLimit,
   light = false,
 }: {
   budget: BudgetSnapshot;
-  budgetLimit: number;
   light?: boolean;
 }) {
   const tone = getBudgetTone(budget);
@@ -106,7 +104,7 @@ export function BudgetMeter({
         <View style={[styles.statusPill, { backgroundColor: colors.surface, borderColor: colors.border }]}>
           <Text style={[styles.statusPillText, { color: colors.text }]}>{formatStatusText(budget)}</Text>
         </View>
-        <Text style={[styles.limitText, { color: colors.muted }]}>预算 {formatCurrency(budgetLimit)}</Text>
+        <Text style={[styles.limitText, { color: colors.muted }]}>预算 {formatCurrency(budget.budgetLimit)}</Text>
       </View>
 
       <View style={[styles.track, { backgroundColor: colors.track }]}>

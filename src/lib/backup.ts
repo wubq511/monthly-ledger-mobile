@@ -1,13 +1,23 @@
-import { isValidMonthInput } from './date';
-import type { CategoryRecord, ExpenseEntry, LedgerBackupFile, SubcategoryRecord } from '../types/ledger';
+import { isValidDateInput, isValidMonthInput } from './date';
+import type {
+  BudgetSettings,
+  CategoryRecord,
+  ExpenseEntry,
+  LedgerMode,
+  LedgerBackupFile,
+  ParsedLedgerBackupFile,
+  SubcategoryRecord,
+} from '../types/ledger';
 
-export const BACKUP_SCHEMA_VERSION = 2;
+export const BACKUP_SCHEMA_VERSION = 3;
 
 export function buildBackupPayload(
   entries: ExpenseEntry[],
   categories: CategoryRecord[],
+  budgetSettings: BudgetSettings,
   appVersion: string,
-  exportedAt = new Date().toISOString()
+  exportedAt = new Date().toISOString(),
+  ledgerMode: LedgerMode = 'month'
 ): LedgerBackupFile {
   return {
     schemaVersion: BACKUP_SCHEMA_VERSION,
@@ -18,6 +28,11 @@ export function buildBackupPayload(
       ...category,
       subcategories: category.subcategories.map((subcategory) => ({ ...subcategory })),
     })),
+    budgetSettings: {
+      defaultBudget: budgetSettings.defaultBudget,
+      monthlyBudgets: { ...budgetSettings.monthlyBudgets },
+    },
+    ledgerMode,
   };
 }
 
@@ -30,7 +45,7 @@ export function createBackupFileName(exportedAt: string) {
   return `monthly-ledger-backup-${year}-${month}-${day}.json`;
 }
 
-export function parseBackupJson(raw: string): LedgerBackupFile {
+export function parseBackupJson(raw: string): ParsedLedgerBackupFile {
   let parsed: unknown;
 
   try {
@@ -45,8 +60,12 @@ export function parseBackupJson(raw: string): LedgerBackupFile {
 
   const candidate = parsed as Record<string, unknown>;
 
+  const schemaVersion = candidate.schemaVersion;
+  const isLegacySchema = schemaVersion === 2;
+  const isCurrentSchema = schemaVersion === BACKUP_SCHEMA_VERSION;
+
   if (
-    candidate.schemaVersion !== BACKUP_SCHEMA_VERSION ||
+    (!isLegacySchema && !isCurrentSchema) ||
     typeof candidate.appVersion !== 'string' ||
     typeof candidate.exportedAt !== 'string' ||
     Number.isNaN(Date.parse(candidate.exportedAt)) ||
@@ -58,6 +77,11 @@ export function parseBackupJson(raw: string): LedgerBackupFile {
 
   const entries = candidate.entries.map(assertExpenseEntry);
   const categories = candidate.categories.map(assertCategoryRecord);
+  const budgetSettings = isCurrentSchema
+    ? assertBudgetSettings(candidate.budgetSettings)
+    : emptyBudgetSettings();
+  const hasLedgerMode = candidate.ledgerMode === 'month' || candidate.ledgerMode === 'day';
+  const ledgerMode = hasLedgerMode ? (candidate.ledgerMode as LedgerMode) : 'month';
   const entryIds = new Set<string>();
   const categoryIds = new Set<string>();
   const subcategoryIds = new Set<string>();
@@ -87,11 +111,54 @@ export function parseBackupJson(raw: string): LedgerBackupFile {
   }
 
   return {
-    schemaVersion: candidate.schemaVersion,
+    schemaVersion,
     appVersion: candidate.appVersion,
     exportedAt: candidate.exportedAt,
     entries,
     categories,
+    budgetSettings,
+    hasBudgetSettings: isCurrentSchema,
+    ledgerMode,
+    hasLedgerMode,
+  };
+}
+
+function emptyBudgetSettings(): BudgetSettings {
+  return {
+    defaultBudget: null,
+    monthlyBudgets: {},
+  };
+}
+
+function assertBudgetSettings(value: unknown): BudgetSettings {
+  if (!value || typeof value !== 'object') {
+    throw new Error('备份文件格式不合法');
+  }
+
+  const candidate = value as Record<string, unknown>;
+
+  if (
+    !(candidate.defaultBudget === null || (typeof candidate.defaultBudget === 'number' && Number.isFinite(candidate.defaultBudget))) ||
+    !candidate.monthlyBudgets ||
+    typeof candidate.monthlyBudgets !== 'object' ||
+    Array.isArray(candidate.monthlyBudgets)
+  ) {
+    throw new Error('备份文件格式不合法');
+  }
+
+  const monthlyBudgets: Record<string, number> = {};
+
+  for (const [monthKey, amount] of Object.entries(candidate.monthlyBudgets as Record<string, unknown>)) {
+    if (!isValidMonthInput(monthKey) || typeof amount !== 'number' || !Number.isFinite(amount)) {
+      throw new Error('备份文件格式不合法');
+    }
+
+    monthlyBudgets[monthKey] = amount;
+  }
+
+  return {
+    defaultBudget: candidate.defaultBudget as number | null,
+    monthlyBudgets,
   };
 }
 
@@ -120,8 +187,14 @@ function assertExpenseEntry(value: unknown): ExpenseEntry {
     throw new Error('备份文件格式不合法');
   }
 
+  const dateKey =
+    typeof entry.dateKey === 'string' && isValidDateInput(entry.dateKey)
+      ? entry.dateKey
+      : `${entry.monthKey}-01`;
+
   return {
     id: entry.id,
+    dateKey,
     monthKey: entry.monthKey,
     amount: entry.amount,
     category: entry.category,

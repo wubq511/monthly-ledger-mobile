@@ -20,6 +20,7 @@ export function useCategoryData() {
   const db = useSQLiteContext();
   const [categories, setCategories] = useState<CategoryRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = async () => {
@@ -29,16 +30,21 @@ export function useCategoryData() {
       const rows = await getAllCategories(db);
       setCategories(rows);
       setError(null);
+      return rows;
     } catch (fetchError) {
       const message = fetchError instanceof Error ? fetchError.message : '读取分类失败';
       setError(message);
+      throw fetchError instanceof Error ? fetchError : new Error(message);
     } finally {
+      setReady(true);
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    void refresh();
+    void refresh().catch(() => {
+      // The hook exposes error state for initial load failures.
+    });
   }, [db]);
 
   const runMutation = async (task: () => Promise<void>) => {
@@ -56,6 +62,7 @@ export function useCategoryData() {
   return {
     categories,
     loading,
+    ready,
     error,
     refresh,
     createCategory: async (name: string) => {

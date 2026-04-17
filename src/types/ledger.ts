@@ -1,7 +1,9 @@
 export type TabKey = 'overview' | 'add' | 'trends';
+export type LedgerMode = 'month' | 'day';
 
 export interface ExpenseEntry {
   id: string;
+  dateKey: string;
   monthKey: string;
   amount: number;
   category: string;
@@ -11,6 +13,7 @@ export interface ExpenseEntry {
 }
 
 export interface ExpenseDraft {
+  dateKey: string;
   monthKey: string;
   amount: number;
   category: string;
@@ -24,6 +27,13 @@ export interface LedgerBackupFile {
   exportedAt: string;
   entries: ExpenseEntry[];
   categories: CategoryRecord[];
+  budgetSettings: BudgetSettings;
+  ledgerMode: LedgerMode;
+}
+
+export interface ParsedLedgerBackupFile extends LedgerBackupFile {
+  hasBudgetSettings: boolean;
+  hasLedgerMode: boolean;
 }
 
 export interface ImportExpensesResult {
@@ -73,4 +83,9 @@ export interface SubcategoryUsageSummary {
   categoryName: string;
   subcategoryName: string;
   expenseCount: number;
+}
+
+export interface BudgetSettings {
+  defaultBudget: number | null;
+  monthlyBudgets: Record<string, number>;
 }
