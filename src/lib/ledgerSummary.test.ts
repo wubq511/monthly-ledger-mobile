@@ -49,6 +49,7 @@ const categories: CategoryRecord[] = [
 const entries: ExpenseEntry[] = [
   {
     id: '1',
+    dateKey: '2026-01-03',
     monthKey: '2026-01',
     amount: 1200,
     category: '饮食',
@@ -58,6 +59,7 @@ const entries: ExpenseEntry[] = [
   },
   {
     id: '2',
+    dateKey: '2026-01-12',
     monthKey: '2026-01',
     amount: 950,
     category: '娱乐',
@@ -67,6 +69,7 @@ const entries: ExpenseEntry[] = [
   },
   {
     id: '3',
+    dateKey: '2026-02-02',
     monthKey: '2026-02',
     amount: 600,
     category: '饮食',
@@ -76,6 +79,7 @@ const entries: ExpenseEntry[] = [
   },
   {
     id: '4',
+    dateKey: '2026-02-11',
     monthKey: '2026-02',
     amount: 200,
     category: '交通',
@@ -85,6 +89,7 @@ const entries: ExpenseEntry[] = [
   },
   {
     id: '5',
+    dateKey: '2026-03-05',
     monthKey: '2026-03',
     amount: 1500,
     category: '饮食',
@@ -94,6 +99,7 @@ const entries: ExpenseEntry[] = [
   },
   {
     id: '6',
+    dateKey: '2026-03-08',
     monthKey: '2026-03',
     amount: 900,
     category: '交通',
@@ -273,6 +279,7 @@ describe('buildLedgerSummary', () => {
         ...entries,
         {
           id: '7',
+          dateKey: '2026-04-02',
           monthKey: '2026-04',
           amount: 5000,
           category: '其他',

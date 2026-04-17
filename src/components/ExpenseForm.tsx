@@ -20,27 +20,38 @@ import {
   getRuntimeCategoryDefinition,
   getRuntimeDefaultCategory,
 } from '../constants/categories';
-import { getCurrentMonthKey, getPreviousMonthKey, isValidMonthInput } from '../lib/date';
+import {
+  getCurrentDateKey,
+  getCurrentMonthKey,
+  getMonthKeyFromDateKey,
+  getPreviousDateKey,
+  getPreviousMonthKey,
+  isValidDateInput,
+  isValidMonthInput,
+} from '../lib/date';
 import { getExpenseFormLayoutMetrics, getKeyboardInset } from '../lib/expenseFormLayout';
 import { getNextCategoryStep } from '../lib/expenseFormFlow';
+import { resolveExpensePeriod } from '../lib/ledgerMode';
 import type {
   BudgetSettings,
   CategoryRecord,
   CategoryUsageSummary,
   ExpenseDraft,
+  LedgerMode,
   SubcategoryUsageSummary,
 } from '../types/ledger';
 
 interface ExpenseFormProps {
   categories: CategoryRecord[];
   categoriesLoading: boolean;
+  ledgerMode: LedgerMode;
+  ledgerModeLoading: boolean;
   onSubmit: (draft: ExpenseDraft) => Promise<void>;
   onCompleteSequence: () => void;
   onImported: () => Promise<void>;
   budgetSettings: BudgetSettings;
   budgetLoading: boolean;
-  budgetError: string | null;
-  onRefreshBudgetSettings: () => Promise<void>;
+  onSetLedgerMode: (mode: LedgerMode) => Promise<void>;
   onSetDefaultBudget: (amount: number) => Promise<void>;
   onSetMonthlyBudgetOverride: (monthKey: string, amount: number) => Promise<void>;
   onClearMonthlyBudgetOverride: (monthKey: string) => Promise<void>;
@@ -59,13 +70,14 @@ interface ExpenseFormProps {
 export function ExpenseForm({
   categories,
   categoriesLoading,
+  ledgerMode,
+  ledgerModeLoading,
   onSubmit,
   onCompleteSequence,
   onImported,
   budgetSettings,
   budgetLoading,
-  budgetError,
-  onRefreshBudgetSettings,
+  onSetLedgerMode,
   onSetDefaultBudget,
   onSetMonthlyBudgetOverride,
   onClearMonthlyBudgetOverride,
@@ -84,6 +96,7 @@ export function ExpenseForm({
   const { height: windowHeight } = useWindowDimensions();
   const defaultCategory = getRuntimeDefaultCategory(categories);
   const [monthKey, setMonthKey] = useState(getCurrentMonthKey());
+  const [dateKey, setDateKey] = useState(getCurrentDateKey());
   const [amount, setAmount] = useState('');
   const [category, setCategory] = useState(defaultCategory.name);
   const [subcategory, setSubcategory] = useState(defaultCategory.subcategories[0] ?? '');
@@ -95,11 +108,26 @@ export function ExpenseForm({
 
   const categoryDefinition = getRuntimeCategoryDefinition(categories, category);
   const activeCategoryRecord = categories.find((item) => item.name === category) ?? null;
+  const activePeriod = resolveExpensePeriod(ledgerMode, monthKey, dateKey);
   const layoutMetrics = getExpenseFormLayoutMetrics({
     safeAreaBottom: insets.bottom,
     keyboardInset,
   });
   const keyboardVisible = layoutMetrics.compactSubmit;
+
+  useEffect(() => {
+    if (ledgerMode === 'day') {
+      if (getMonthKeyFromDateKey(dateKey) !== monthKey) {
+        setDateKey(`${monthKey}-01`);
+      }
+      return;
+    }
+
+    const nextMonthKey = getMonthKeyFromDateKey(dateKey);
+    if (nextMonthKey !== monthKey) {
+      setMonthKey(nextMonthKey);
+    }
+  }, [dateKey, ledgerMode, monthKey]);
 
   useEffect(() => {
     if (categories.length === 0) {
@@ -162,8 +190,13 @@ export function ExpenseForm({
   const handleSubmit = async () => {
     const normalizedAmount = Number(amount);
 
-    if (!isValidMonthInput(monthKey)) {
+    if (ledgerMode === 'month' && !isValidMonthInput(monthKey)) {
       Alert.alert('月份格式不正确', '请输入 YYYY-MM 格式，例如 2026-04。');
+      return;
+    }
+
+    if (ledgerMode === 'day' && !isValidDateInput(dateKey)) {
+      Alert.alert('日期格式不正确', '请输入 YYYY-MM-DD 格式，例如 2026-04-17。');
       return;
     }
 
@@ -180,19 +213,17 @@ export function ExpenseForm({
     setSubmitting(true);
 
     try {
+      const period = resolveExpensePeriod(ledgerMode, monthKey, dateKey);
+
       await onSubmit({
-        monthKey,
+        ...period,
         amount: normalizedAmount,
         category,
         subcategory: subcategory || null,
         note: note.trim() || null,
       });
 
-      const nextStep = getNextCategoryStep(
-        categories,
-        category,
-        subcategory || null
-      );
+      const nextStep = getNextCategoryStep(categories, category, subcategory || null);
       setAmount('');
       setNote('');
 
@@ -233,30 +264,57 @@ export function ExpenseForm({
           <Text style={styles.backupEntryArrow}>↗</Text>
         </Pressable>
 
-        <View style={styles.fieldBlock}>
-          <Text style={styles.fieldLabel}>月份</Text>
-          <TextInput
-            value={monthKey}
-            onChangeText={setMonthKey}
-            placeholder="YYYY-MM"
-            placeholderTextColor="#A18D80"
-            style={styles.textInput}
-          />
-          <View style={styles.quickRow}>
-            <QuickDateButton
-              label="本月"
-              value={getCurrentMonthKey()}
-              currentValue={monthKey}
-              onPick={setMonthKey}
+        {ledgerMode === 'day' ? (
+          <View style={styles.fieldBlock}>
+            <Text style={styles.fieldLabel}>日期</Text>
+            <TextInput
+              value={dateKey}
+              onChangeText={setDateKey}
+              placeholder="YYYY-MM-DD"
+              placeholderTextColor="#A18D80"
+              style={styles.textInput}
             />
-            <QuickDateButton
-              label="上月"
-              value={getPreviousMonthKey()}
-              currentValue={monthKey}
-              onPick={setMonthKey}
-            />
+            <View style={styles.quickRow}>
+              <QuickDateButton
+                label="今天"
+                value={getCurrentDateKey()}
+                currentValue={dateKey}
+                onPick={setDateKey}
+              />
+              <QuickDateButton
+                label="昨天"
+                value={getPreviousDateKey()}
+                currentValue={dateKey}
+                onPick={setDateKey}
+              />
+            </View>
           </View>
-        </View>
+        ) : (
+          <View style={styles.fieldBlock}>
+            <Text style={styles.fieldLabel}>月份</Text>
+            <TextInput
+              value={monthKey}
+              onChangeText={setMonthKey}
+              placeholder="YYYY-MM"
+              placeholderTextColor="#A18D80"
+              style={styles.textInput}
+            />
+            <View style={styles.quickRow}>
+              <QuickDateButton
+                label="本月"
+                value={getCurrentMonthKey()}
+                currentValue={monthKey}
+                onPick={setMonthKey}
+              />
+              <QuickDateButton
+                label="上月"
+                value={getPreviousMonthKey()}
+                currentValue={monthKey}
+                onPick={setMonthKey}
+              />
+            </View>
+          </View>
+        )}
 
         <View style={styles.fieldBlock}>
           <Text style={styles.fieldLabel}>金额</Text>
@@ -363,15 +421,16 @@ export function ExpenseForm({
 
       <LedgerManagementHubModal
         visible={managementHubVisible}
-        monthKey={monthKey}
+        monthKey={activePeriod.monthKey}
         categories={categories}
         categoriesLoading={categoriesLoading}
+        ledgerMode={ledgerMode}
+        ledgerModeLoading={ledgerModeLoading}
         budgetSettings={budgetSettings}
         budgetLoading={budgetLoading}
-        budgetError={budgetError}
         onClose={() => setManagementHubVisible(false)}
         onImported={onImported}
-        onRefreshBudgetSettings={onRefreshBudgetSettings}
+        onSetLedgerMode={onSetLedgerMode}
         onSetDefaultBudget={onSetDefaultBudget}
         onSetMonthlyBudgetOverride={onSetMonthlyBudgetOverride}
         onClearMonthlyBudgetOverride={onClearMonthlyBudgetOverride}

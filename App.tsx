@@ -2,6 +2,7 @@ import { Suspense, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  BackHandler,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -28,11 +29,13 @@ import { initializeDatabase } from './src/lib/database';
 import { getAppLoadState } from './src/lib/appLoading';
 import { formatMonthLabel, formatShortMonthLabel, getCurrentMonthKey, shiftMonth } from './src/lib/date';
 import { formatCurrency } from './src/lib/format';
+import { formatEntryPeriodLabel, getBackNavigationTarget } from './src/lib/ledgerMode';
 import { buildLedgerSummary, type LedgerSummary } from './src/lib/ledgerSummary';
 import { useBudgetSettings } from './src/hooks/useBudgetSettings';
 import { useCategoryData } from './src/hooks/useCategoryData';
 import { useLedgerData } from './src/hooks/useLedgerData';
-import type { ExpenseDraft, ExpenseEntry, TabKey } from './src/types/ledger';
+import { useLedgerMode } from './src/hooks/useLedgerMode';
+import type { ExpenseDraft, ExpenseEntry, LedgerMode, TabKey } from './src/types/ledger';
 
 export default function App() {
   const [fontsLoaded] = useFonts({
@@ -96,6 +99,14 @@ function LedgerApp() {
     setMonthlyBudgetOverride,
     clearMonthlyBudgetOverride,
   } = useBudgetSettings();
+  const {
+    mode: ledgerMode,
+    loading: ledgerModeLoading,
+    ready: ledgerModeReady,
+    error: ledgerModeError,
+    refresh: refreshLedgerMode,
+    setMode: setLedgerMode,
+  } = useLedgerMode();
   const [activeTab, setActiveTab] = useState<TabKey>('overview');
   const [selectedMonth, setSelectedMonth] = useState(getCurrentMonthKey());
   const [selectedRankingCategory, setSelectedRankingCategory] = useState<string | null>(null);
@@ -107,8 +118,10 @@ function LedgerApp() {
     categoriesLoading,
     budgetReady,
     budgetLoading,
+    ledgerModeReady,
+    ledgerModeLoading,
   });
-  const error = entriesError ?? categoriesError ?? budgetError;
+  const error = entriesError ?? categoriesError ?? budgetError ?? ledgerModeError;
   const summary = buildLedgerSummary(
     entries,
     categories,
@@ -139,6 +152,23 @@ function LedgerApp() {
     }
   }, [hasSelectedRankingCategory, rankingCategoryKey, selectedRankingCategory, summary]);
 
+  useEffect(() => {
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      const target = getBackNavigationTarget(activeTab);
+
+      if (!target) {
+        return false;
+      }
+
+      setActiveTab(target);
+      return true;
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [activeTab]);
+
   if (bootLoading) {
     return <LoadingScreen />;
   }
@@ -151,7 +181,7 @@ function LedgerApp() {
   const handleDeleteExpense = (entry: ExpenseEntry) => {
     Alert.alert(
       '删除这笔记录？',
-      `${entry.category} ${formatCurrency(entry.amount)} · ${formatMonthLabel(entry.monthKey)}`,
+      `${entry.category} ${formatCurrency(entry.amount)} · ${formatEntryPeriodLabel(entry, ledgerMode)}`,
       [
         { text: '取消', style: 'cancel' },
         {
@@ -170,7 +200,7 @@ function LedgerApp() {
   };
 
   const handleImported = async () => {
-    await Promise.all([refresh(), refreshCategories()]);
+    await Promise.all([refresh(), refreshCategories(), refreshBudgetSettings(), refreshLedgerMode()]);
   };
 
   return (
@@ -184,6 +214,7 @@ function LedgerApp() {
             selectedMonth={selectedMonth}
             onMonthChange={setSelectedMonth}
             summary={summary}
+            ledgerMode={ledgerMode}
             categoryColors={summary.categoryColors}
             onDelete={handleDeleteExpense}
           />
@@ -193,15 +224,14 @@ function LedgerApp() {
           <ExpenseForm
             categories={categories}
             categoriesLoading={categoriesLoading}
+            ledgerMode={ledgerMode}
+            ledgerModeLoading={ledgerModeLoading}
             onSubmit={handleAddExpense}
             onCompleteSequence={() => setActiveTab('overview')}
             onImported={handleImported}
             budgetSettings={budgetSettings}
             budgetLoading={budgetLoading}
-            budgetError={budgetError}
-            onRefreshBudgetSettings={async () => {
-              await refreshBudgetSettings();
-            }}
+            onSetLedgerMode={setLedgerMode}
             onSetDefaultBudget={setDefaultBudget}
             onSetMonthlyBudgetOverride={setMonthlyBudgetOverride}
             onClearMonthlyBudgetOverride={clearMonthlyBudgetOverride}
@@ -260,12 +290,14 @@ function OverviewScreen({
   selectedMonth,
   onMonthChange,
   summary,
+  ledgerMode,
   categoryColors,
   onDelete,
 }: {
   selectedMonth: string;
   onMonthChange: (monthKey: string) => void;
   summary: LedgerSummary;
+  ledgerMode: LedgerMode;
   categoryColors: Record<string, string>;
   onDelete: (entry: ExpenseEntry) => void;
 }) {
@@ -330,7 +362,7 @@ function OverviewScreen({
                       {entry.subcategory ? ` · ${entry.subcategory}` : ''}
                     </Text>
                     <Text style={styles.entryMeta}>
-                      {formatMonthLabel(entry.monthKey)}
+                      {formatEntryPeriodLabel(entry, ledgerMode)}
                       {entry.note ? ` · ${entry.note}` : ''}
                     </Text>
                   </View>

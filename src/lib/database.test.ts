@@ -28,6 +28,12 @@ interface BudgetSettingRow {
   updatedAt: string;
 }
 
+interface AppSettingRow {
+  key: string;
+  value: string;
+  updatedAt: string;
+}
+
 interface CategoryRecordLike {
   id: string;
   name: string;
@@ -66,6 +72,8 @@ interface DatabaseApi {
     db: never,
     settings: { defaultBudget: number | null; monthlyBudgets: Record<string, number> }
   ) => Promise<void>;
+  getLedgerMode: (db: never) => Promise<'month' | 'day'>;
+  setLedgerMode: (db: never, mode: 'month' | 'day') => Promise<void>;
   importBackupMerge: (
     db: never,
     backup: ParsedLedgerBackupFile
@@ -99,8 +107,10 @@ class FakeDatabase {
   categories: CategoryRow[];
   subcategories: SubcategoryRow[];
   budgetSettings: BudgetSettingRow[];
+  appSettings: AppSettingRow[];
   execStatements: string[];
   runStatements: Array<{ sql: string; params: unknown[] }>;
+  readStatements: string[];
   failOnSqlPrefix: string | null;
   transactionDepth: number;
 
@@ -109,8 +119,10 @@ class FakeDatabase {
     this.categories = [];
     this.subcategories = [];
     this.budgetSettings = [];
+    this.appSettings = [];
     this.execStatements = [];
     this.runStatements = [];
+    this.readStatements = [];
     this.failOnSqlPrefix = failOnSqlPrefix;
     this.transactionDepth = 0;
   }
@@ -122,19 +134,21 @@ class FakeDatabase {
 
   async getAllAsync(sql: string) {
     const normalized = normalizeSql(sql);
+    this.readStatements.push(sql);
 
     if (normalized.includes('FROM EXPENSES')) {
       return this.rows
         .slice()
         .sort((left, right) => {
-          if (left.monthKey === right.monthKey) {
+          if (left.dateKey === right.dateKey) {
             return right.createdAt.localeCompare(left.createdAt);
           }
 
-          return right.monthKey.localeCompare(left.monthKey);
+          return right.dateKey.localeCompare(left.dateKey);
         })
         .map((row) => ({
           id: row.id,
+          date: row.dateKey,
           month_key: row.monthKey,
           amount: row.amount,
           category: row.category,
@@ -183,6 +197,16 @@ class FakeDatabase {
         }));
     }
 
+    if (normalized.includes('FROM APP_SETTINGS')) {
+      return this.appSettings
+        .slice()
+        .sort((left, right) => left.key.localeCompare(right.key))
+        .map((row) => ({
+          key: row.key,
+          value: row.value,
+        }));
+    }
+
     return [];
   }
 
@@ -212,12 +236,23 @@ class FakeDatabase {
     if (normalized.startsWith('INSERT INTO EXPENSES')) {
       this.rows.push({
         id: params[0] as string,
+        dateKey: params[1] as string,
         monthKey: params[2] as string,
         amount: params[3] as number,
         category: params[4] as string,
         subcategory: (params[5] as string | null) ?? null,
         note: (params[6] as string | null) ?? null,
         createdAt: params[7] as string,
+      });
+      return;
+    }
+
+    if (normalized.startsWith('INSERT INTO APP_SETTINGS')) {
+      this.appSettings = this.appSettings.filter((row) => row.key !== params[0]);
+      this.appSettings.push({
+        key: params[0] as string,
+        value: params[1] as string,
+        updatedAt: params[2] as string,
       });
       return;
     }
@@ -373,8 +408,10 @@ class FakeDatabase {
       categories: this.categories.map((row) => ({ ...row })),
       subcategories: this.subcategories.map((row) => ({ ...row })),
       budgetSettings: this.budgetSettings.map((row) => ({ ...row })),
+      appSettings: this.appSettings.map((row) => ({ ...row })),
       execStatements: [...this.execStatements],
       runStatements: this.runStatements.map((row) => ({ sql: row.sql, params: [...row.params] })),
+      readStatements: [...this.readStatements],
     };
 
     try {
@@ -384,8 +421,10 @@ class FakeDatabase {
       this.categories = snapshot.categories;
       this.subcategories = snapshot.subcategories;
       this.budgetSettings = snapshot.budgetSettings;
+      this.appSettings = snapshot.appSettings;
       this.execStatements = snapshot.execStatements;
       this.runStatements = snapshot.runStatements;
+      this.readStatements = snapshot.readStatements;
       throw error;
     } finally {
       this.transactionDepth -= 1;
@@ -400,6 +439,7 @@ function normalizeSql(sql: string) {
 const existing: ExpenseEntry[] = [
   {
     id: 'existing-1',
+    dateKey: '2026-04-03',
     monthKey: '2026-04',
     amount: 66,
     category: '饮食',
@@ -413,6 +453,7 @@ const incoming: ExpenseEntry[] = [
   existing[0],
   {
     id: 'incoming-2',
+    dateKey: '2026-05-08',
     monthKey: '2026-05',
     amount: 88,
     category: '交通',
@@ -450,6 +491,7 @@ const legacyBackup: ParsedLedgerBackupFile = {
   entries: [
     {
       id: 'legacy-expense-1',
+      dateKey: '2026-04-16',
       monthKey: '2026-04',
       amount: 88,
       category: '旅行',
@@ -463,7 +505,9 @@ const legacyBackup: ParsedLedgerBackupFile = {
     defaultBudget: null,
     monthlyBudgets: {},
   },
+  ledgerMode: 'month',
   hasBudgetSettings: false,
+  hasLedgerMode: false,
 };
 
 const schema3Backup: ParsedLedgerBackupFile = {
@@ -475,7 +519,9 @@ const schema3Backup: ParsedLedgerBackupFile = {
       '2026-04': 3000,
     },
   },
+  ledgerMode: 'day',
   hasBudgetSettings: true,
+  hasLedgerMode: true,
 };
 
 describe('database backup operations', () => {
@@ -552,6 +598,7 @@ describe('database category persistence', () => {
 
     expect(category).toBeDefined();
     await insertExpense(db as never, {
+      dateKey: '2026-04-11',
       monthKey: '2026-04',
       amount: 20,
       category: category!.name,
@@ -580,6 +627,7 @@ describe('database category persistence', () => {
 
     expect(category).toBeDefined();
     await insertExpense(db as never, {
+      dateKey: '2026-04-12',
       monthKey: '2026-04',
       amount: 20,
       category: category!.name,
@@ -613,6 +661,7 @@ describe('database category persistence', () => {
     expect(subcategory).toBeDefined();
 
     await insertExpense(db as never, {
+      dateKey: '2026-04-13',
       monthKey: '2026-04',
       amount: 18,
       category: category!.name,
@@ -1004,5 +1053,68 @@ describe('database budget persistence', () => {
 
     expect(categories.length).toBeGreaterThan(0);
     expect(expenses).toHaveLength(0);
+  });
+});
+
+describe('database app settings', () => {
+  it('includes the app settings schema for ledger mode persistence', async () => {
+    const db = new FakeDatabase([]);
+    const initializeDatabase = requireDatabaseApi('initializeDatabase');
+
+    await initializeDatabase(db as never);
+
+    const combinedSql = db.execStatements.join('\n');
+
+    expect(combinedSql).toContain('CREATE TABLE IF NOT EXISTS app_settings');
+    expect(combinedSql).toContain('key TEXT PRIMARY KEY NOT NULL');
+    expect(combinedSql).toContain('value TEXT NOT NULL');
+  });
+
+  it('stores and reads the ledger mode setting', async () => {
+    const db = new FakeDatabase([]);
+    const initializeDatabase = requireDatabaseApi('initializeDatabase');
+    const getLedgerMode = requireDatabaseApi('getLedgerMode');
+    const setLedgerMode = requireDatabaseApi('setLedgerMode');
+
+    await initializeDatabase(db as never);
+    await expect(getLedgerMode(db as never)).resolves.toBe('month');
+
+    await setLedgerMode(db as never, 'day');
+
+    await expect(getLedgerMode(db as never)).resolves.toBe('day');
+  });
+});
+
+describe('database expense dates', () => {
+  it('stores the draft date key instead of forcing the first day of the month', async () => {
+    const db = new FakeDatabase([]);
+    const insertExpense = requireDatabaseApi('insertExpense');
+    const getAllExpenses = requireDatabaseApi('getAllExpenses');
+
+    await insertExpense(db as never, {
+      dateKey: '2026-04-17',
+      monthKey: '2026-04',
+      amount: 20,
+      category: '饮食',
+      subcategory: '食堂',
+      note: '午饭',
+    });
+
+    const expenses = await getAllExpenses(db as never);
+
+    expect(expenses[0]?.dateKey).toBe('2026-04-17');
+  });
+
+  it('reads expenses using date ordering', async () => {
+    const db = new FakeDatabase(existing);
+    const getAllExpenses = requireDatabaseApi('getAllExpenses');
+
+    await getAllExpenses(db as never);
+
+    expect(
+      db.readStatements.some((sql) =>
+        normalizeSql(sql).includes('ORDER BY DATE DESC, CREATED_AT DESC')
+      )
+    ).toBe(true);
   });
 });

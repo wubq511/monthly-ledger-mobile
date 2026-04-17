@@ -25,24 +25,26 @@ import type {
   BudgetSettings,
   CategoryRecord,
   CategoryUsageSummary,
+  LedgerMode,
   SubcategoryUsageSummary,
 } from '../types/ledger';
 
 type BudgetEditorState =
-  | { mode: 'default'; title: string; initialValue: string; confirmLabel: string }
-  | { mode: 'month'; monthKey: string; title: string; initialValue: string; confirmLabel: string };
+  | { mode: 'default'; title: string; confirmLabel: string }
+  | { mode: 'month'; monthKey: string; title: string; confirmLabel: string };
 
 interface LedgerManagementHubModalProps {
   visible: boolean;
   monthKey: string;
   categories: CategoryRecord[];
   categoriesLoading: boolean;
+  ledgerMode: LedgerMode;
+  ledgerModeLoading: boolean;
   budgetSettings: BudgetSettings;
   budgetLoading: boolean;
-  budgetError: string | null;
   onClose: () => void;
   onImported: () => Promise<void>;
-  onRefreshBudgetSettings: () => Promise<void>;
+  onSetLedgerMode: (mode: LedgerMode) => Promise<void>;
   onSetDefaultBudget: (amount: number) => Promise<void>;
   onSetMonthlyBudgetOverride: (monthKey: string, amount: number) => Promise<void>;
   onClearMonthlyBudgetOverride: (monthKey: string) => Promise<void>;
@@ -67,12 +69,13 @@ export function LedgerManagementHubModal({
   monthKey,
   categories,
   categoriesLoading,
+  ledgerMode,
+  ledgerModeLoading,
   budgetSettings,
   budgetLoading,
-  budgetError,
   onClose,
   onImported,
-  onRefreshBudgetSettings,
+  onSetLedgerMode,
   onSetDefaultBudget,
   onSetMonthlyBudgetOverride,
   onClearMonthlyBudgetOverride,
@@ -130,8 +133,10 @@ export function LedgerManagementHubModal({
     };
   }, [visible, windowHeight]);
 
+  const modalBusy = Boolean(busyLabel);
+
   const closeModal = () => {
-    if (busyLabel) {
+    if (modalBusy) {
       return;
     }
 
@@ -145,7 +150,6 @@ export function LedgerManagementHubModal({
     setEditor({
       mode: 'default',
       title: '修改默认月预算',
-      initialValue: budgetSettings.defaultBudget === null ? '' : String(budgetSettings.defaultBudget),
       confirmLabel: '正在保存默认预算...',
     });
     setEditorValue(budgetSettings.defaultBudget === null ? '' : String(budgetSettings.defaultBudget));
@@ -163,7 +167,6 @@ export function LedgerManagementHubModal({
       mode: 'month',
       monthKey,
       title: `设置 ${formatMonthLabel(monthKey)} 预算`,
-      initialValue,
       confirmLabel: '正在保存本月预算...',
     });
     setEditorValue(initialValue);
@@ -202,7 +205,7 @@ export function LedgerManagementHubModal({
   const handleResetMonthBudget = () => {
     Alert.alert(
       '恢复默认预算？',
-      `${formatMonthLabel(monthKey)} 会改回跟随默认预算，不再保留单独预算。`,
+      `${formatMonthLabel(monthKey)} 会改回跟随默认预算。`,
       [
         { text: '取消', style: 'cancel' },
         {
@@ -227,7 +230,23 @@ export function LedgerManagementHubModal({
   };
 
   const handleImported = async () => {
-    await Promise.all([onImported(), onRefreshBudgetSettings()]);
+    await onImported();
+  };
+
+  const handleSetLedgerMode = async (mode: LedgerMode) => {
+    if (modalBusy || ledgerModeLoading || ledgerMode === mode) {
+      return;
+    }
+
+    setBusyLabel('正在切换记账模式...');
+
+    try {
+      await onSetLedgerMode(mode);
+    } catch (error) {
+      Alert.alert('切换失败', getErrorMessage(error, '记账模式切换失败'));
+    } finally {
+      setBusyLabel(null);
+    }
   };
 
   const editorBottomOffset = keyboardInset > 0 ? keyboardInset + 12 : Math.max(insets.bottom, 20) + 12;
@@ -248,11 +267,7 @@ export function LedgerManagementHubModal({
           ]}>
           <View style={styles.card}>
             <View style={styles.header}>
-              <View style={styles.headerTextGroup}>
-                <Text style={styles.eyebrow}>Ledger Studio</Text>
-                <Text style={styles.title}>账本设置</Text>
-                <Text style={styles.body}>把预算、分类和备份入口收在同一个面板里。</Text>
-              </View>
+              <Text style={styles.title}>账本设置</Text>
 
               <Pressable onPress={closeModal} style={styles.closeButton}>
                 <Text style={styles.closeButtonText}>关闭</Text>
@@ -264,23 +279,40 @@ export function LedgerManagementHubModal({
               contentContainerStyle={[styles.content, { paddingBottom: contentBottomPadding }]}
               keyboardShouldPersistTaps="handled"
               showsVerticalScrollIndicator={false}>
+              <View style={styles.sectionCard}>
+                <Text style={styles.sectionTitle}>记账模式</Text>
+
+                <View style={styles.modeButtonRow}>
+                  <ModeButton
+                    active={ledgerMode === 'month'}
+                    disabled={ledgerModeLoading || modalBusy}
+                    label="月模式"
+                    onPress={() => {
+                      void handleSetLedgerMode('month');
+                    }}
+                  />
+                  <ModeButton
+                    active={ledgerMode === 'day'}
+                    disabled={ledgerModeLoading || modalBusy}
+                    label="日模式"
+                    onPress={() => {
+                      void handleSetLedgerMode('day');
+                    }}
+                  />
+                </View>
+              </View>
+
               <BudgetSettingsCard
                 monthKey={monthKey}
                 settings={budgetSettings}
-                loading={budgetLoading}
-                error={budgetError}
-                statusText={busyLabel}
+                loading={budgetLoading || modalBusy}
                 onEditDefaultBudget={openDefaultBudgetEditor}
                 onEditMonthBudget={openMonthBudgetEditor}
                 onResetMonthBudget={handleResetMonthBudget}
               />
 
-              <View style={styles.categoryEntryCard}>
-                <Text style={styles.sectionEyebrow}>Category Studio</Text>
+              <View style={styles.sectionCard}>
                 <Text style={styles.sectionTitle}>分类管理</Text>
-                <Text style={styles.sectionBody}>
-                  继续沿用当前的大类 / 细分管理与拖拽排序体验，从这里进入即可。
-                </Text>
                 <Pressable
                   onPress={() => setCategoryModalVisible(true)}
                   style={({ pressed }) => [styles.primaryButton, pressed && styles.primaryButtonPressed]}>
@@ -288,7 +320,7 @@ export function LedgerManagementHubModal({
                 </Pressable>
               </View>
 
-              <BackupActions onImported={handleImported} />
+              <BackupActions ledgerMode={ledgerMode} onImported={handleImported} />
             </ScrollView>
           </View>
         </View>
@@ -296,9 +328,9 @@ export function LedgerManagementHubModal({
         {editor ? (
           <Pressable
             style={styles.editorBackdrop}
-            disabled={Boolean(busyLabel)}
+            disabled={modalBusy}
             onPress={() => {
-              if (busyLabel) {
+              if (modalBusy) {
                 return;
               }
 
@@ -361,6 +393,31 @@ export function LedgerManagementHubModal({
   );
 }
 
+function ModeButton({
+  active,
+  disabled,
+  label,
+  onPress,
+}: {
+  active: boolean;
+  disabled: boolean;
+  label: string;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      disabled={disabled}
+      onPress={onPress}
+      style={[
+        styles.modeButton,
+        active && styles.modeButtonActive,
+        disabled && styles.modeButtonDisabled,
+      ]}>
+      <Text style={[styles.modeButtonText, active && styles.modeButtonTextActive]}>{label}</Text>
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
   root: {
     flex: 1,
@@ -384,36 +441,19 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     gap: 12,
     paddingHorizontal: 18,
     paddingTop: 18,
     paddingBottom: 12,
   },
-  headerTextGroup: {
-    flex: 1,
-    gap: 4,
-  },
-  eyebrow: {
-    fontSize: 12,
-    fontFamily: 'SpaceGrotesk_700Bold',
-    fontWeight: '700',
-    letterSpacing: 1.2,
-    textTransform: 'uppercase',
-    color: '#9A5E3E',
-  },
   title: {
+    flex: 1,
     fontSize: 26,
     lineHeight: 30,
     fontFamily: 'SpaceGrotesk_700Bold',
     fontWeight: '700',
     color: '#231B16',
-  },
-  body: {
-    fontSize: 14,
-    lineHeight: 21,
-    fontFamily: 'SpaceGrotesk_400Regular',
-    color: '#6E5C50',
   },
   closeButton: {
     borderRadius: 999,
@@ -435,22 +475,14 @@ const styles = StyleSheet.create({
     paddingBottom: 28,
     gap: 14,
   },
-  categoryEntryCard: {
+  sectionCard: {
     borderRadius: 28,
     borderWidth: 1,
     borderColor: '#E4D5C8',
     backgroundColor: '#FBF7F1',
     paddingHorizontal: 18,
     paddingVertical: 18,
-    gap: 10,
-  },
-  sectionEyebrow: {
-    fontSize: 12,
-    fontFamily: 'SpaceGrotesk_700Bold',
-    fontWeight: '700',
-    letterSpacing: 1.2,
-    textTransform: 'uppercase',
-    color: '#9A5E3E',
+    gap: 12,
   },
   sectionTitle: {
     fontSize: 20,
@@ -459,11 +491,34 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#231B16',
   },
-  sectionBody: {
+  modeButtonRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  modeButton: {
+    flex: 1,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#DDCCBE',
+    backgroundColor: '#FFFDFC',
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  modeButtonActive: {
+    borderColor: '#231B16',
+    backgroundColor: '#231B16',
+  },
+  modeButtonDisabled: {
+    opacity: 0.7,
+  },
+  modeButtonText: {
     fontSize: 14,
-    lineHeight: 21,
-    fontFamily: 'SpaceGrotesk_400Regular',
-    color: '#6E5C50',
+    fontFamily: 'SpaceGrotesk_700Bold',
+    fontWeight: '700',
+    color: '#5E493E',
+  },
+  modeButtonTextActive: {
+    color: '#FBF7F1',
   },
   primaryButton: {
     borderRadius: 18,

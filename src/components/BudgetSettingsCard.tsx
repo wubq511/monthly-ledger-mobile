@@ -1,4 +1,4 @@
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { getBudgetModeLabel } from '../lib/budgetInput';
 import { formatMonthLabel } from '../lib/date';
@@ -10,8 +10,6 @@ interface BudgetSettingsCardProps {
   monthKey: string;
   settings: BudgetSettings;
   loading: boolean;
-  error: string | null;
-  statusText: string | null;
   onEditDefaultBudget: () => void;
   onEditMonthBudget: () => void;
   onResetMonthBudget: () => void;
@@ -25,8 +23,6 @@ export function BudgetSettingsCard({
   monthKey,
   settings,
   loading,
-  error,
-  statusText,
   onEditDefaultBudget,
   onEditMonthBudget,
   onResetMonthBudget,
@@ -36,60 +32,49 @@ export function BudgetSettingsCard({
   const defaultBudget = settings.defaultBudget;
   const effectiveBudget =
     settings.monthlyBudgets[monthKey] ?? settings.defaultBudget ?? MONTHLY_BUDGET_LIMIT;
-  const monthModeLabel = hasMonthOverride
-    ? '本月单独预算'
-    : defaultBudget !== null
-      ? '跟随默认预算'
-      : '跟随系统默认';
-  const monthModeHint = hasMonthOverride
-    ? `${formatMonthLabel(monthKey)} 会使用单独预算，不影响其他月份。`
-    : defaultBudget !== null
-      ? `${formatMonthLabel(monthKey)} 会跟随默认月预算。`
-      : `还没设置默认预算，当前暂用系统默认 ${formatCurrency(MONTHLY_BUDGET_LIMIT)}。`;
 
   return (
     <View style={styles.card}>
-      <Text style={styles.eyebrow}>Budget Control</Text>
       <Text style={styles.title}>预算设置</Text>
-      <Text style={styles.body}>支持默认月预算，也支持按当前录入月份设置单独预算。</Text>
 
       <View style={styles.infoList}>
         <InfoRow
           label="默认月预算"
           value={formatBudgetValue(defaultBudget)}
-          body={
-            defaultBudget === null
-              ? `未设置时会回退到系统默认 ${formatCurrency(MONTHLY_BUDGET_LIMIT)}。`
-              : '未单独设置的月份都会跟随这个预算。'
-          }
         />
         <InfoRow
           label={`${formatMonthLabel(monthKey)} 实际预算`}
           value={formatCurrency(effectiveBudget)}
-          body={`${monthModeLabel} · ${monthModeHint}`}
           emphasized
         />
       </View>
 
-      {loading ? (
-        <View style={styles.statusRow}>
-          <ActivityIndicator size="small" color="#9A5E3E" />
-          <Text style={styles.statusText}>正在读取预算设置...</Text>
-        </View>
-      ) : null}
-
-      {statusText ? <Text style={styles.statusText}>{statusText}</Text> : null}
-      {error ? <Text style={styles.errorText}>预算设置读取失败：{error}</Text> : null}
-
       <View style={styles.actionGroup}>
-        <ActionButton label="修改默认预算" onPress={onEditDefaultBudget} disabled={loading} primary />
-        <ActionButton
-          label={hasMonthOverride ? '修改本月预算' : '设置本月预算'}
-          onPress={onEditMonthBudget}
-          disabled={loading}
-        />
+        <View style={styles.actionRow}>
+          <ActionButton
+            label="修改默认预算"
+            onPress={onEditDefaultBudget}
+            disabled={loading}
+            primary
+            fill
+          />
+          <ActionButton
+            label={hasMonthOverride ? '修改本月预算' : '设置本月预算'}
+            onPress={onEditMonthBudget}
+            disabled={loading}
+            fill
+          />
+        </View>
         {hasMonthOverride ? (
-          <ActionButton label="恢复默认预算" onPress={onResetMonthBudget} disabled={loading} tone="danger" />
+          <View style={styles.actionRow}>
+            <ActionButton
+              label="恢复默认预算"
+              onPress={onResetMonthBudget}
+              disabled={loading}
+              tone="danger"
+              fill
+            />
+          </View>
         ) : null}
       </View>
     </View>
@@ -99,12 +84,10 @@ export function BudgetSettingsCard({
 function InfoRow({
   label,
   value,
-  body,
   emphasized = false,
 }: {
   label: string;
   value: string;
-  body: string;
   emphasized?: boolean;
 }) {
   return (
@@ -113,7 +96,6 @@ function InfoRow({
         <Text style={styles.infoLabel}>{label}</Text>
         <Text style={styles.infoValue}>{value}</Text>
       </View>
-      <Text style={styles.infoBody}>{body}</Text>
     </View>
   );
 }
@@ -124,12 +106,14 @@ function ActionButton({
   disabled,
   primary = false,
   tone = 'default',
+  fill = false,
 }: {
   label: string;
   onPress: () => void;
   disabled: boolean;
   primary?: boolean;
   tone?: 'default' | 'danger';
+  fill?: boolean;
 }) {
   return (
     <Pressable
@@ -137,6 +121,7 @@ function ActionButton({
       onPress={onPress}
       style={({ pressed }) => [
         styles.actionButton,
+        fill && styles.actionButtonFill,
         primary && styles.actionButtonPrimary,
         tone === 'danger' && styles.actionButtonDanger,
         disabled && styles.actionButtonDisabled,
@@ -164,26 +149,12 @@ const styles = StyleSheet.create({
     paddingVertical: 18,
     gap: 12,
   },
-  eyebrow: {
-    fontSize: 12,
-    fontFamily: 'SpaceGrotesk_700Bold',
-    fontWeight: '700',
-    letterSpacing: 1.2,
-    textTransform: 'uppercase',
-    color: '#9A5E3E',
-  },
   title: {
     fontSize: 20,
     lineHeight: 24,
     fontFamily: 'SpaceGrotesk_700Bold',
     fontWeight: '700',
     color: '#231B16',
-  },
-  body: {
-    fontSize: 14,
-    lineHeight: 21,
-    fontFamily: 'SpaceGrotesk_400Regular',
-    color: '#6E5C50',
   },
   infoList: {
     gap: 10,
@@ -220,32 +191,11 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#231B16',
   },
-  infoBody: {
-    fontSize: 13,
-    lineHeight: 19,
-    fontFamily: 'SpaceGrotesk_400Regular',
-    color: '#806D62',
-  },
-  statusRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  statusText: {
-    fontSize: 13,
-    lineHeight: 19,
-    fontFamily: 'SpaceGrotesk_500Medium',
-    color: '#9A5E3E',
-  },
-  errorText: {
-    fontSize: 13,
-    lineHeight: 19,
-    fontFamily: 'SpaceGrotesk_500Medium',
-    color: '#8E2F33',
-  },
   actionGroup: {
+    gap: 10,
+  },
+  actionRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
     gap: 10,
   },
   actionButton: {
@@ -255,6 +205,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFDFC',
     paddingHorizontal: 14,
     paddingVertical: 12,
+    minHeight: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  actionButtonFill: {
+    flex: 1,
   },
   actionButtonPrimary: {
     borderColor: '#231B16',

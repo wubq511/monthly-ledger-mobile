@@ -5,6 +5,8 @@ interface AppLoadStateInput {
   categoriesLoading: boolean;
   budgetReady: boolean;
   budgetLoading: boolean;
+  ledgerModeReady: boolean;
+  ledgerModeLoading: boolean;
 }
 
 export function getAppLoadState({
@@ -14,9 +16,13 @@ export function getAppLoadState({
   categoriesLoading,
   budgetReady,
   budgetLoading,
+  ledgerModeReady,
+  ledgerModeLoading,
 }: AppLoadStateInput) {
-  const bootLoading = !entriesReady || !categoriesReady || !budgetReady;
-  const syncing = !bootLoading && (entriesLoading || categoriesLoading || budgetLoading);
+  const bootLoading = !entriesReady || !categoriesReady || !budgetReady || !ledgerModeReady;
+  const syncing =
+    !bootLoading &&
+    (entriesLoading || categoriesLoading || budgetLoading || ledgerModeLoading);
 
   return {
     bootLoading,

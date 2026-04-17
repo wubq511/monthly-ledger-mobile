@@ -12,6 +12,8 @@ describe('appLoading helpers', () => {
         categoriesLoading: false,
         budgetReady: true,
         budgetLoading: false,
+        ledgerModeReady: true,
+        ledgerModeLoading: false,
       })
     ).toEqual({
       bootLoading: true,
@@ -28,6 +30,8 @@ describe('appLoading helpers', () => {
         categoriesLoading: true,
         budgetReady: true,
         budgetLoading: false,
+        ledgerModeReady: true,
+        ledgerModeLoading: false,
       })
     ).toEqual({
       bootLoading: false,
@@ -44,6 +48,8 @@ describe('appLoading helpers', () => {
         categoriesLoading: false,
         budgetReady: true,
         budgetLoading: false,
+        ledgerModeReady: true,
+        ledgerModeLoading: false,
       })
     ).toEqual({
       bootLoading: false,

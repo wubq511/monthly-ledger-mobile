@@ -9,6 +9,7 @@ import type {
   ExpenseDraft,
   ExpenseEntry,
   ImportExpensesResult,
+  LedgerMode,
   ParsedLedgerBackupFile,
   SubcategoryUsageSummary,
   SubcategoryRecord,
@@ -20,6 +21,7 @@ function createId() {
 
 interface ExpenseRow {
   id: string;
+  date: string;
   month_key: string;
   amount: number;
   category: string;
@@ -52,6 +54,11 @@ interface BudgetSettingRow {
   amount: number;
 }
 
+interface AppSettingRow {
+  key: string;
+  value: string;
+}
+
 export interface ImportCategoryDefinitionsResult {
   importedCategoryCount: number;
   importedSubcategoryCount: number;
@@ -73,6 +80,7 @@ export interface ReplaceBackupResult {
 function mapExpenseRow(row: ExpenseRow): ExpenseEntry {
   return {
     id: row.id,
+    dateKey: row.date,
     monthKey: row.month_key,
     amount: row.amount,
     category: row.category,
@@ -211,6 +219,12 @@ export async function initializeDatabase(db: SQLiteDatabase) {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY NOT NULL,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_expenses_month_key ON expenses(month_key);
     CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(date);
     CREATE INDEX IF NOT EXISTS idx_categories_sort_order ON categories(sort_order);
@@ -228,9 +242,9 @@ export async function initializeDatabase(db: SQLiteDatabase) {
 
 export async function getAllExpenses(db: SQLiteDatabase) {
   const rows = await db.getAllAsync<ExpenseRow>(
-    `SELECT id, month_key, amount, category, subcategory, note, created_at
+    `SELECT id, date, month_key, amount, category, subcategory, note, created_at
      FROM expenses
-     ORDER BY month_key DESC, created_at DESC`
+     ORDER BY date DESC, created_at DESC`
   );
 
   return rows.map(mapExpenseRow);
@@ -291,6 +305,27 @@ export async function setDefaultBudget(db: SQLiteDatabase, amount: number) {
   );
 }
 
+export async function getLedgerMode(db: SQLiteDatabase): Promise<LedgerMode> {
+  const rows = await db.getAllAsync<AppSettingRow>(
+    `SELECT key, value
+     FROM app_settings
+     WHERE key = 'ledger_mode'
+     LIMIT 1`
+  );
+  const value = rows[0]?.value;
+
+  return value === 'day' ? 'day' : 'month';
+}
+
+export async function setLedgerMode(db: SQLiteDatabase, mode: LedgerMode) {
+  await db.runAsync(
+    `INSERT INTO app_settings (key, value, updated_at)
+     VALUES (?, ?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+    ['ledger_mode', mode, new Date().toISOString()]
+  );
+}
+
 export async function setMonthlyBudgetOverride(db: SQLiteDatabase, monthKey: string, amount: number) {
   await db.runAsync(
     `INSERT INTO budget_settings (scope, month_key, amount, updated_at)
@@ -325,14 +360,13 @@ export async function replaceBudgetSettings(db: SQLiteDatabase, settings: Budget
 export async function insertExpense(db: SQLiteDatabase, draft: ExpenseDraft) {
   const id = createId();
   const createdAt = new Date().toISOString();
-  const syntheticDate = `${draft.monthKey}-01`;
 
   await db.runAsync(
     `INSERT INTO expenses (id, date, month_key, amount, category, subcategory, note, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
-      syntheticDate,
+      draft.dateKey,
       draft.monthKey,
       draft.amount,
       draft.category,
@@ -717,6 +751,10 @@ export async function importBackupMerge(
       await replaceBudgetSettingsContents(db, backup.budgetSettings);
     }
 
+    if (backup.hasLedgerMode) {
+      await setLedgerMode(db, backup.ledgerMode);
+    }
+
     result = {
       categoryResult,
       expenseResult,
@@ -745,6 +783,10 @@ export async function restoreBackupReplace(
       await replaceBudgetSettingsContents(db, backup.budgetSettings);
     }
 
+    if (backup.hasLedgerMode) {
+      await setLedgerMode(db, backup.ledgerMode);
+    }
+
     result = {
       expenseResult,
       budgetSettingsApplied: backup.hasBudgetSettings,
@@ -764,7 +806,7 @@ async function insertImportedExpense(db: SQLiteDatabase, entry: ExpenseEntry) {
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       entry.id,
-      `${entry.monthKey}-01`,
+      entry.dateKey,
       entry.monthKey,
       entry.amount,
       entry.category,

@@ -14,7 +14,8 @@ type BuildBackupPayload = (
   categories: CategoryRecord[],
   budgetSettings: BudgetSettings,
   appVersion: string,
-  exportedAt?: string
+  exportedAt?: string,
+  ledgerMode?: 'month' | 'day'
 ) => LedgerBackupFile;
 
 const buildBackupPayload = backup.buildBackupPayload as unknown as BuildBackupPayload;
@@ -25,6 +26,7 @@ const BACKUP_SCHEMA_VERSION = backup.BACKUP_SCHEMA_VERSION;
 const entries: ExpenseEntry[] = [
   {
     id: 'entry-1',
+    dateKey: '2026-04-07',
     monthKey: '2026-04',
     amount: 25.5,
     category: '饮食',
@@ -78,7 +80,8 @@ describe('backup helpers', () => {
       categories,
       budgetSettings,
       '1.0.8',
-      '2026-04-07T12:00:00.000Z'
+      '2026-04-07T12:00:00.000Z',
+      'day'
     );
 
     expect(payload).toEqual({
@@ -88,6 +91,7 @@ describe('backup helpers', () => {
       entries,
       categories,
       budgetSettings,
+      ledgerMode: 'day',
     });
   });
 
@@ -100,7 +104,8 @@ describe('backup helpers', () => {
         monthlyBudgets: { '2026-04': 3000 },
       },
       '1.0.8',
-      '2026-04-16T12:00:00.000Z'
+      '2026-04-16T12:00:00.000Z',
+      'day'
     );
 
     expect(payload.budgetSettings).toEqual({
@@ -118,6 +123,7 @@ describe('backup helpers', () => {
         entries,
         categories,
         budgetSettings,
+        ledgerMode: 'day',
       })
     );
 
@@ -126,6 +132,7 @@ describe('backup helpers', () => {
     expect(parsed.categories[0]?.subcategories[0]?.name).toBe('食堂');
     expect(parsed.budgetSettings).toEqual(budgetSettings);
     expect(parsed.hasBudgetSettings).toBe(true);
+    expect(parsed.ledgerMode).toBe('day');
   });
 
   it('accepts legacy backup files without budget settings and falls back to empty config', () => {
@@ -144,6 +151,7 @@ describe('backup helpers', () => {
       monthlyBudgets: {},
     });
     expect(parsed.hasBudgetSettings).toBe(false);
+    expect(parsed.ledgerMode).toBe('month');
   });
 
   it('rejects malformed backup documents', () => {

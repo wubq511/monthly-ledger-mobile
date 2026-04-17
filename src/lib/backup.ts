@@ -1,8 +1,9 @@
-import { isValidMonthInput } from './date';
+import { isValidDateInput, isValidMonthInput } from './date';
 import type {
   BudgetSettings,
   CategoryRecord,
   ExpenseEntry,
+  LedgerMode,
   LedgerBackupFile,
   ParsedLedgerBackupFile,
   SubcategoryRecord,
@@ -15,7 +16,8 @@ export function buildBackupPayload(
   categories: CategoryRecord[],
   budgetSettings: BudgetSettings,
   appVersion: string,
-  exportedAt = new Date().toISOString()
+  exportedAt = new Date().toISOString(),
+  ledgerMode: LedgerMode = 'month'
 ): LedgerBackupFile {
   return {
     schemaVersion: BACKUP_SCHEMA_VERSION,
@@ -30,6 +32,7 @@ export function buildBackupPayload(
       defaultBudget: budgetSettings.defaultBudget,
       monthlyBudgets: { ...budgetSettings.monthlyBudgets },
     },
+    ledgerMode,
   };
 }
 
@@ -77,6 +80,8 @@ export function parseBackupJson(raw: string): ParsedLedgerBackupFile {
   const budgetSettings = isCurrentSchema
     ? assertBudgetSettings(candidate.budgetSettings)
     : emptyBudgetSettings();
+  const hasLedgerMode = candidate.ledgerMode === 'month' || candidate.ledgerMode === 'day';
+  const ledgerMode = hasLedgerMode ? (candidate.ledgerMode as LedgerMode) : 'month';
   const entryIds = new Set<string>();
   const categoryIds = new Set<string>();
   const subcategoryIds = new Set<string>();
@@ -113,6 +118,8 @@ export function parseBackupJson(raw: string): ParsedLedgerBackupFile {
     categories,
     budgetSettings,
     hasBudgetSettings: isCurrentSchema,
+    ledgerMode,
+    hasLedgerMode,
   };
 }
 
@@ -180,8 +187,14 @@ function assertExpenseEntry(value: unknown): ExpenseEntry {
     throw new Error('备份文件格式不合法');
   }
 
+  const dateKey =
+    typeof entry.dateKey === 'string' && isValidDateInput(entry.dateKey)
+      ? entry.dateKey
+      : `${entry.monthKey}-01`;
+
   return {
     id: entry.id,
+    dateKey,
     monthKey: entry.monthKey,
     amount: entry.amount,
     category: entry.category,
