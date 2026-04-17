@@ -25,6 +25,7 @@ import { MonthlyLineChart } from './src/components/Charts';
 import { ExpenseForm } from './src/components/ExpenseForm';
 import { CategoryMonthRankingCard, CategoryRankingList } from './src/components/RankingLists';
 import { initializeDatabase } from './src/lib/database';
+import { getAppLoadState } from './src/lib/appLoading';
 import { formatMonthLabel, formatShortMonthLabel, getCurrentMonthKey, shiftMonth } from './src/lib/date';
 import { formatCurrency } from './src/lib/format';
 import { buildLedgerSummary, type LedgerSummary } from './src/lib/ledgerSummary';
@@ -59,10 +60,19 @@ export default function App() {
 
 function LedgerApp() {
   const insets = useSafeAreaInsets();
-  const { entries, loading: entriesLoading, error: entriesError, addEntry, removeEntry, refresh } = useLedgerData();
+  const {
+    entries,
+    loading: entriesLoading,
+    ready: entriesReady,
+    error: entriesError,
+    addEntry,
+    removeEntry,
+    refresh,
+  } = useLedgerData();
   const {
     categories,
     loading: categoriesLoading,
+    ready: categoriesReady,
     error: categoriesError,
     refresh: refreshCategories,
     createCategory,
@@ -79,6 +89,7 @@ function LedgerApp() {
   const {
     settings: budgetSettings,
     loading: budgetLoading,
+    ready: budgetReady,
     error: budgetError,
     refresh: refreshBudgetSettings,
     setDefaultBudget,
@@ -89,7 +100,14 @@ function LedgerApp() {
   const [selectedMonth, setSelectedMonth] = useState(getCurrentMonthKey());
   const [selectedRankingCategory, setSelectedRankingCategory] = useState<string | null>(null);
 
-  const loading = entriesLoading || categoriesLoading || budgetLoading;
+  const { bootLoading, syncing } = getAppLoadState({
+    entriesReady,
+    entriesLoading,
+    categoriesReady,
+    categoriesLoading,
+    budgetReady,
+    budgetLoading,
+  });
   const error = entriesError ?? categoriesError ?? budgetError;
   const summary = buildLedgerSummary(
     entries,
@@ -121,7 +139,7 @@ function LedgerApp() {
     }
   }, [hasSelectedRankingCategory, rankingCategoryKey, selectedRankingCategory, summary]);
 
-  if (loading) {
+  if (bootLoading) {
     return <LoadingScreen />;
   }
 
@@ -159,7 +177,7 @@ function LedgerApp() {
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <StatusBar style="dark" />
       <View style={styles.appShell}>
-        {loading ? <LoadingOverlay /> : null}
+        {syncing ? <LoadingOverlay /> : null}
 
         {activeTab === 'overview' ? (
           <OverviewScreen

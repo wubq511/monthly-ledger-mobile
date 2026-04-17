@@ -8,6 +8,7 @@ export function useLedgerData() {
   const db = useSQLiteContext();
   const [entries, setEntries] = useState<ExpenseEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = async () => {
@@ -21,6 +22,7 @@ export function useLedgerData() {
       const message = fetchError instanceof Error ? fetchError.message : '读取账本失败';
       setError(message);
     } finally {
+      setReady(true);
       setLoading(false);
     }
   };
@@ -56,6 +58,7 @@ export function useLedgerData() {
   return {
     entries,
     loading,
+    ready,
     error,
     addEntry,
     removeEntry,

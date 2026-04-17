@@ -18,6 +18,7 @@ export function useBudgetSettings() {
   const db = useSQLiteContext();
   const [settings, setSettings] = useState<BudgetSettings>(EMPTY_BUDGET_SETTINGS);
   const [loading, setLoading] = useState(true);
+  const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = async () => {
@@ -31,6 +32,7 @@ export function useBudgetSettings() {
       const message = fetchError instanceof Error ? fetchError.message : '读取预算设置失败';
       setError(message);
     } finally {
+      setReady(true);
       setLoading(false);
     }
   };
@@ -54,6 +56,7 @@ export function useBudgetSettings() {
   return {
     settings,
     loading,
+    ready,
     error,
     refresh,
     setDefaultBudget: async (amount: number) => {

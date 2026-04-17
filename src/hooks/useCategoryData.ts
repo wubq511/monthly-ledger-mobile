@@ -20,6 +20,7 @@ export function useCategoryData() {
   const db = useSQLiteContext();
   const [categories, setCategories] = useState<CategoryRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = async () => {
@@ -33,6 +34,7 @@ export function useCategoryData() {
       const message = fetchError instanceof Error ? fetchError.message : '读取分类失败';
       setError(message);
     } finally {
+      setReady(true);
       setLoading(false);
     }
   };
@@ -56,6 +58,7 @@ export function useCategoryData() {
   return {
     categories,
     loading,
+    ready,
     error,
     refresh,
     createCategory: async (name: string) => {
