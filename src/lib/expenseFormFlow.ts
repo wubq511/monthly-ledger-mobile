@@ -1,9 +1,36 @@
-import type { CategoryRecord } from '../types/ledger';
+import { getMonthKeyFromDateKey } from './date';
+import type { CategoryRecord, LedgerMode } from '../types/ledger';
 
 export interface NextCategoryStep {
   nextCategory: string | null;
   nextSubcategory: string | null;
   shouldReturnToOverview: boolean;
+}
+
+export interface PeriodDraftSyncInput {
+  previousLedgerMode: LedgerMode;
+  ledgerMode: LedgerMode;
+  monthKey: string;
+  dateKey: string;
+}
+
+export type PeriodDraftSyncAction = { monthKey: string } | { dateKey: string } | null;
+
+export function getPeriodDraftSyncAction({
+  previousLedgerMode,
+  ledgerMode,
+  monthKey,
+  dateKey,
+}: PeriodDraftSyncInput): PeriodDraftSyncAction {
+  if (previousLedgerMode === ledgerMode) {
+    return null;
+  }
+
+  if (ledgerMode === 'day') {
+    return { dateKey: `${monthKey}-01` };
+  }
+
+  return { monthKey: getMonthKeyFromDateKey(dateKey) };
 }
 
 export function getNextCategoryStep(

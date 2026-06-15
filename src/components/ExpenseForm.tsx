@@ -23,14 +23,13 @@ import {
 import {
   getCurrentDateKey,
   getCurrentMonthKey,
-  getMonthKeyFromDateKey,
   getPreviousDateKey,
   getPreviousMonthKey,
   isValidDateInput,
   isValidMonthInput,
 } from '../lib/date';
 import { getExpenseFormLayoutMetrics, getKeyboardInset } from '../lib/expenseFormLayout';
-import { getNextCategoryStep } from '../lib/expenseFormFlow';
+import { getNextCategoryStep, getPeriodDraftSyncAction } from '../lib/expenseFormFlow';
 import { resolveExpensePeriod } from '../lib/ledgerMode';
 import type {
   BudgetSettings,
@@ -105,6 +104,7 @@ export function ExpenseForm({
   const [keyboardInset, setKeyboardInset] = useState(0);
   const [managementHubVisible, setManagementHubVisible] = useState(false);
   const amountInputRef = useRef<TextInput | null>(null);
+  const previousLedgerModeRef = useRef<LedgerMode>(ledgerMode);
 
   const categoryDefinition = getRuntimeCategoryDefinition(categories, category);
   const activeCategoryRecord = categories.find((item) => item.name === category) ?? null;
@@ -116,16 +116,24 @@ export function ExpenseForm({
   const keyboardVisible = layoutMetrics.compactSubmit;
 
   useEffect(() => {
-    if (ledgerMode === 'day') {
-      if (getMonthKeyFromDateKey(dateKey) !== monthKey) {
-        setDateKey(`${monthKey}-01`);
-      }
+    const previousLedgerMode = previousLedgerModeRef.current;
+    const syncAction = getPeriodDraftSyncAction({
+      previousLedgerMode,
+      ledgerMode,
+      monthKey,
+      dateKey,
+    });
+
+    previousLedgerModeRef.current = ledgerMode;
+
+    if (!syncAction) {
       return;
     }
 
-    const nextMonthKey = getMonthKeyFromDateKey(dateKey);
-    if (nextMonthKey !== monthKey) {
-      setMonthKey(nextMonthKey);
+    if ('monthKey' in syncAction) {
+      setMonthKey(syncAction.monthKey);
+    } else {
+      setDateKey(syncAction.dateKey);
     }
   }, [dateKey, ledgerMode, monthKey]);
 

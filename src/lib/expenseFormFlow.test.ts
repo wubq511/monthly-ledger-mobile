@@ -145,3 +145,49 @@ describe('getNextCategoryStep', () => {
     });
   });
 });
+
+describe('getPeriodDraftSyncAction', () => {
+  it('does not overwrite a manually edited month from the stale day draft', () => {
+    expect(
+      expenseFormFlow.getPeriodDraftSyncAction({
+        previousLedgerMode: 'month',
+        ledgerMode: 'month',
+        monthKey: '2026-05',
+        dateKey: '2026-06-15',
+      })
+    ).toBeNull();
+  });
+
+  it('does not overwrite a manually edited day from the stale month draft', () => {
+    expect(
+      expenseFormFlow.getPeriodDraftSyncAction({
+        previousLedgerMode: 'day',
+        ledgerMode: 'day',
+        monthKey: '2026-06',
+        dateKey: '2026-05-02',
+      })
+    ).toBeNull();
+  });
+
+  it('aligns the day draft once when switching from month mode to day mode', () => {
+    expect(
+      expenseFormFlow.getPeriodDraftSyncAction({
+        previousLedgerMode: 'month',
+        ledgerMode: 'day',
+        monthKey: '2026-05',
+        dateKey: '2026-06-15',
+      })
+    ).toEqual({ dateKey: '2026-05-01' });
+  });
+
+  it('aligns the month draft once when switching from day mode to month mode', () => {
+    expect(
+      expenseFormFlow.getPeriodDraftSyncAction({
+        previousLedgerMode: 'day',
+        ledgerMode: 'month',
+        monthKey: '2026-06',
+        dateKey: '2026-05-02',
+      })
+    ).toEqual({ monthKey: '2026-05' });
+  });
+});
